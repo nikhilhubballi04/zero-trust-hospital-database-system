@@ -1027,7 +1027,8 @@ function AppointmentBookingForm({ preselectedDoctor, onClearDoctor }) {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:5000/api/appointments', {
+      const apiHost = window.location.hostname || 'localhost';
+      const response = await fetch(`http://${apiHost}:5000/api/appointments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
