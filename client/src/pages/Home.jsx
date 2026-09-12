@@ -94,6 +94,16 @@ const Icons = {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="#F59E0B" stroke="#F59E0B" strokeWidth="1">
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
     </svg>
+  ),
+  Menu: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="3" x2="21" y1="6" y2="6" /><line x1="3" x2="21" y1="12" y2="12" /><line x1="3" x2="21" y1="18" y2="18" />
+    </svg>
+  ),
+  Close: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+    </svg>
   )
 };
 
@@ -102,6 +112,7 @@ export default function Home() {
   const [scrolled, setScrolled] = useState(false);
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('All');
   const [selectedDoctorForBooking, setSelectedDoctorForBooking] = useState('');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40);
@@ -356,8 +367,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <div style={styles.navLinks}>
+          {/* Desktop Navigation Links */}
+          <div className="hide-on-mobile" style={styles.navLinks}>
             <button onClick={() => scrollTo('services')} style={styles.navBtn}>Specialities</button>
             <button onClick={() => scrollTo('doctors')} style={styles.navBtn}>Find a Doctor</button>
             <button onClick={() => scrollTo('facilities')} style={styles.navBtn}>Facilities</button>
@@ -367,7 +378,7 @@ export default function Home() {
           </div>
 
           {/* Action CTAs */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <button 
               onClick={() => navigate('/login')} 
               style={styles.staffPortalBtn}
@@ -376,12 +387,62 @@ export default function Home() {
               <Icons.Lock />
               <span>Staff Portal</span>
             </button>
-            <button onClick={() => scrollTo('appointment')} style={styles.primaryCtaBtn}>
+            <button onClick={() => scrollTo('appointment')} style={styles.primaryCtaBtn} className="hide-on-mobile">
               <Icons.Calendar />
               <span>Book Appointment</span>
             </button>
+
+            {/* Mobile Menu Hamburger Toggle */}
+            <button
+              className="show-on-mobile"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              style={styles.mobileNavToggle}
+              aria-label="Toggle Navigation Menu"
+            >
+              {mobileMenuOpen ? <Icons.Close /> : <Icons.Menu />}
+            </button>
           </div>
         </div>
+
+        {/* MOBILE SLIDE-DOWN DRAWER MENU */}
+        {mobileMenuOpen && (
+          <div className="show-on-mobile drawer-animate" style={styles.mobileNavDrawer}>
+            <div style={styles.mobileNavLinks}>
+              <button onClick={() => { scrollTo('services'); setMobileMenuOpen(false); }} style={styles.mobileNavBtn}>Specialities & Departments</button>
+              <button onClick={() => { scrollTo('doctors'); setMobileMenuOpen(false); }} style={styles.mobileNavBtn}>Find a Doctor & Faculty</button>
+              <button onClick={() => { scrollTo('facilities'); setMobileMenuOpen(false); }} style={styles.mobileNavBtn}>Modern Hospital Facilities</button>
+              <button onClick={() => { scrollTo('security'); setMobileMenuOpen(false); }} style={styles.mobileNavBtn}>Zero Trust Data Privacy</button>
+              <button onClick={() => { scrollTo('reviews'); setMobileMenuOpen(false); }} style={styles.mobileNavBtn}>Patient Recovery Stories</button>
+              <button onClick={() => { scrollTo('contact'); setMobileMenuOpen(false); }} style={styles.mobileNavBtn}>Contact, Visiting & Hours</button>
+            </div>
+
+            <div style={styles.mobileNavDivider} />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button 
+                onClick={() => { scrollTo('appointment'); setMobileMenuOpen(false); }} 
+                style={styles.mobileAppointmentBtn}
+              >
+                <Icons.Calendar />
+                <span>Book Doctor Appointment</span>
+              </button>
+              <button 
+                onClick={() => { navigate('/login'); setMobileMenuOpen(false); }} 
+                style={styles.mobileStaffBtn}
+              >
+                <Icons.Lock />
+                <span>Zero Trust Staff Workstation Portal</span>
+              </button>
+              <a 
+                href="tel:9483659165" 
+                style={styles.mobileEmergencyLink}
+              >
+                <Icons.PhoneCall />
+                <span>24/7 Emergency: +91 94836 59165</span>
+              </a>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* 3. HERO SECTION */}
@@ -390,7 +451,7 @@ export default function Home() {
           <div style={styles.heroGradients} />
         </div>
         <div style={{ ...styles.container, position: 'relative', zIndex: 2 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '48px', alignItems: 'center' }}>
+          <div className="responsive-hero-grid" style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '48px', alignItems: 'center' }}>
             
             {/* Left Content */}
             <div>
@@ -517,7 +578,7 @@ export default function Home() {
       <section id="security" style={styles.securitySection}>
         <div style={styles.container}>
           <div style={styles.securityCard}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '36px', alignItems: 'center' }}>
+            <div className="responsive-hero-grid" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '36px', alignItems: 'center' }}>
               <div>
                 <div style={styles.securityPill}>
                   <Icons.ShieldCheck />
@@ -529,7 +590,7 @@ export default function Home() {
                 <p style={styles.securityDesc}>
                   Unlike traditional systems where internal networks are vulnerable, Mavaji's Hospital enforces an uncompromising <strong>"Never Trust, Always Verify"</strong> security model. Patient health records, diagnostic scans, and lab reports are micro-segmented and accessible strictly by your verified attending physician.
                 </p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '20px' }}>
+                <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '20px' }}>
                   <div style={styles.securityFeature}>
                     <div style={{ color: '#10B981', fontWeight: '700' }}>✓ Role-Based Micro-Segmentation</div>
                     <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>Lab techs only see tests; pharmacists only see prescriptions.</div>
@@ -715,7 +776,7 @@ export default function Home() {
       {/* 8. INTERACTIVE APPOINTMENT BOOKING SECTION */}
       <section id="appointment" style={{ ...styles.sectionPad, background: '#EBF3FC' }}>
         <div style={styles.container}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '48px', alignItems: 'start' }}>
+          <div className="responsive-appointment-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '48px', alignItems: 'start' }}>
             
             {/* Appointment Info Column */}
             <div>
@@ -816,7 +877,7 @@ export default function Home() {
       {/* 10. COMPREHENSIVE INSTITUTIONAL FOOTER */}
       <footer id="contact" style={styles.footer}>
         <div style={styles.container}>
-          <div style={styles.footerGrid}>
+          <div className="responsive-footer-grid" style={styles.footerGrid}>
             
             {/* Column 1: Hospital Info */}
             <div>
@@ -1088,7 +1149,7 @@ function AppointmentBookingForm({ preselectedDoctor, onClearDoctor }) {
       </div>
 
       {/* Name and Phone */}
-      <div style={formStyles.row2}>
+      <div className="responsive-grid-2" style={formStyles.row2}>
         <div>
           <label style={formStyles.label}>PATIENT FULL NAME *</label>
           <input 
@@ -1114,7 +1175,7 @@ function AppointmentBookingForm({ preselectedDoctor, onClearDoctor }) {
       </div>
 
       {/* Email and Department */}
-      <div style={formStyles.row2}>
+      <div className="responsive-grid-2" style={formStyles.row2}>
         <div>
           <label style={formStyles.label}>EMAIL ADDRESS (FOR REPORTS)</label>
           <input 
@@ -1328,6 +1389,94 @@ const styles = {
     padding: '9px 18px',
     cursor: 'pointer',
     boxShadow: '0 2px 8px rgba(10, 77, 162, 0.3)'
+  },
+  mobileNavToggle: {
+    background: '#F1F5F9',
+    border: '1px solid #CBD5E1',
+    borderRadius: '8px',
+    padding: '8px',
+    color: '#0A4DA2',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer'
+  },
+  mobileNavDrawer: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    background: '#FFFFFF',
+    borderBottom: '1px solid #E2E8F0',
+    boxShadow: '0 20px 40px rgba(15, 23, 42, 0.15)',
+    padding: '20px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+    zIndex: 999
+  },
+  mobileNavLinks: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px'
+  },
+  mobileNavBtn: {
+    background: 'transparent',
+    border: 'none',
+    textAlign: 'left',
+    padding: '12px 8px',
+    fontSize: '15px',
+    fontWeight: '600',
+    color: '#1E293B',
+    borderBottom: '1px solid #F1F5F9',
+    cursor: 'pointer'
+  },
+  mobileNavDivider: {
+    height: '1px',
+    background: '#E2E8F0',
+    margin: '4px 0'
+  },
+  mobileStaffBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    background: '#0D1B2A',
+    color: '#FFFFFF',
+    border: 'none',
+    borderRadius: '10px',
+    padding: '13px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer'
+  },
+  mobileAppointmentBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    background: '#0A4DA2',
+    color: '#FFFFFF',
+    border: 'none',
+    borderRadius: '10px',
+    padding: '13px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer'
+  },
+  mobileEmergencyLink: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    background: '#FEF2F2',
+    color: '#DC2626',
+    border: '1px solid #FECACA',
+    borderRadius: '10px',
+    padding: '12px',
+    fontSize: '13px',
+    fontWeight: '700',
+    textDecoration: 'none'
   },
   heroSection: {
     position: 'relative',
@@ -1603,12 +1752,12 @@ const styles = {
   },
   grid4: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 1fr))',
     gap: '24px'
   },
   grid3: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))',
     gap: '24px'
   },
   specialityCard: {
@@ -2002,7 +2151,7 @@ const formStyles = {
   },
   slotsGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))',
     gap: '8px'
   },
   slotBtn: {

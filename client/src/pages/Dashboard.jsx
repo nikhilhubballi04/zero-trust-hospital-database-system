@@ -56,6 +56,16 @@ const Icons = {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
+  ),
+  Menu: () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="3" x2="21" y1="6" y2="6" /><line x1="3" x2="21" y1="12" y2="12" /><line x1="3" x2="21" y1="18" y2="18" />
+    </svg>
+  ),
+  Close: () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+    </svg>
   )
 };
 
@@ -71,6 +81,7 @@ export default function Dashboard() {
   const [time, setTime] = useState(new Date());
   const [activeTab, setActiveTab] = useState('overview');
   const [showAddPatient, setShowAddPatient] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Search & Filter states
   const [aptStatusFilter, setAptStatusFilter] = useState('All');
@@ -169,11 +180,129 @@ export default function Dashboard() {
   });
 
   return (
-    <div style={s.layout}>
+    <div className="dashboard-layout" style={s.layout}>
       <SessionTimeout />
 
-      {/* SIDEBAR */}
-      <div style={s.sidebar}>
+      {/* MOBILE TOPBAR (Visible only on mobile <= 860px) */}
+      <div className="show-on-mobile" style={s.mobileTopbar}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            style={s.mobileMenuToggle}
+            aria-label="Open staff navigation menu"
+          >
+            <Icons.Menu />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={s.mobileLogoBadge}><Icons.Cross /></div>
+            <div>
+              <div style={{ fontSize: '15px', fontWeight: '700', color: '#FFFFFF', lineHeight: 1.1 }}>Mavaji's HIS</div>
+              <div style={{ fontSize: '9px', color: '#64748B', fontFamily: 'var(--font-mono)' }}>ZERO TRUST WORKSTATION</div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ ...s.userRoleBadgeMobile, color: roleColor, borderColor: `${roleColor}40`, background: `${roleColor}15` }}>
+            {user.role.replace('_', ' ').toUpperCase()}
+          </span>
+          <button onClick={handleLogout} style={s.mobileSignOutBtn} title="Sign Out">
+            ⊗
+          </button>
+        </div>
+      </div>
+
+      {/* MOBILE DRAWER & BACKDROP OVERLAY */}
+      {mobileMenuOpen && (
+        <div
+          className="overlay-animate"
+          style={s.mobileDrawerOverlay}
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <div
+            className="drawer-animate"
+            style={s.mobileDrawer}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={s.logoIcon}><Icons.Cross /></div>
+                <div>
+                  <div style={s.sidebarLogoTitle}>Mavaji's HIS</div>
+                  <div style={s.sidebarLogoSub}>ZERO TRUST CLINICAL WORKSTATION</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                style={s.mobileCloseBtn}
+                aria-label="Close navigation"
+              >
+                <Icons.Close />
+              </button>
+            </div>
+
+            {/* User Profile Card in Drawer */}
+            <div style={s.userCard}>
+              <div style={{ ...s.userAvatar, background: `${roleColor}25`, borderColor: `${roleColor}50` }}>
+                <span style={{ color: roleColor, fontWeight: '700', fontSize: '16px' }}>
+                  {user.name.charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div style={{ overflow: 'hidden' }}>
+                <div style={s.userName} title={user.name}>{user.name}</div>
+                <div style={{ ...s.userRoleBadge, color: roleColor }}>
+                  {user.role.replace('_', ' ').toUpperCase()}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ ...s.clearanceBox, margin: '14px 0' }}>
+              <div style={{ fontSize: '10px', color: '#64748B', fontFamily: 'var(--font-mono)' }}>CLEARANCE</div>
+              <div style={{ fontSize: '11px', color: '#94A3B8', fontWeight: '600' }}>
+                {roleClearance[user.role] || 'Standard Access'}
+              </div>
+            </div>
+
+            {/* Drawer Navigation Items */}
+            <nav style={{ ...s.nav, flex: 1, overflowY: 'auto' }}>
+              {navItems.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setMobileMenuOpen(false);
+                  }}
+                  style={{
+                    ...s.navItem,
+                    padding: '13px 14px',
+                    ...(activeTab === item.id ? s.navItemActive : {})
+                  }}
+                >
+                  <span style={s.navIcon}>{item.icon}</span>
+                  <span style={{ flex: 1, fontSize: '14px' }}>{item.label}</span>
+                  {item.id === 'appointments' && pendingCount > 0 && (
+                    <span style={s.navBadgePending}>{pendingCount}</span>
+                  )}
+                </button>
+              ))}
+            </nav>
+
+            <div style={{ ...s.sidebarBottom, marginTop: 'auto' }}>
+              <button onClick={() => { navigate('/'); setMobileMenuOpen(false); }} style={s.backToWebBtn}>
+                <span>🏥</span>
+                <span>Hospital Website</span>
+              </button>
+              <button onClick={handleLogout} style={s.logoutBtn}>
+                <span>⊗</span>
+                <span>Sign Out Workstation</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DESKTOP SIDEBAR */}
+      <div className="dashboard-sidebar-desktop" style={s.sidebar}>
         <div style={s.sidebarTop}>
           {/* Logo */}
           <div style={s.sidebarLogo}>
@@ -282,7 +411,7 @@ export default function Dashboard() {
           {activeTab === 'overview' && (
             <div>
               {/* Stat Metric Cards */}
-              <div style={s.statsGrid}>
+              <div className="responsive-grid-4" style={s.statsGrid}>
                 <StatCard 
                   label="REGISTERED PATIENTS" 
                   value={patients.length} 
@@ -311,7 +440,7 @@ export default function Dashboard() {
 
               {/* Appointment Triage Cards for Staff */}
               {['admin', 'doctor', 'nurse'].includes(user.role) && (
-                <div style={s.aptTriageGrid}>
+                <div className="responsive-grid-3" style={s.aptTriageGrid}>
                   {[
                     { label: 'Pending Review', count: pendingCount, color: '#F59E0B', bg: 'rgba(245, 158, 11, 0.08)' },
                     { label: 'Confirmed & Scheduled', count: confirmedCount, color: '#10B981', bg: 'rgba(16, 185, 129, 0.08)' },
@@ -330,7 +459,7 @@ export default function Dashboard() {
               )}
 
               {/* Two-Column Clinical Permissions & Security Status */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
+              <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
                 
                 {/* Role Permissions */}
                 <div style={s.infoCard}>
@@ -343,7 +472,7 @@ export default function Dashboard() {
                   <p style={{ fontSize: '13px', color: '#94A3B8', marginBottom: '20px', lineHeight: '1.6' }}>
                     Access permissions are micro-segmented and strictly bounded to your clinical responsibilities under least-privilege policy.
                   </p>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                  <div className="responsive-grid-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
                     {getPermissions(user.role).map((perm, i) => (
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#131F37', padding: '10px 14px', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.15)' }}>
                         <span style={{ color: '#10B981' }}><Icons.Check /></span>
@@ -412,7 +541,7 @@ export default function Dashboard() {
                   <div style={{ fontSize: '14px', color: '#94A3B8' }}>No appointments found for this status.</div>
                 </div>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
+                <div className="table-responsive" style={{ overflowX: 'auto' }}>
                   <table style={s.table}>
                     <thead>
                       <tr>
@@ -516,7 +645,7 @@ export default function Dashboard() {
                   <div style={{ fontSize: '14px', color: '#94A3B8' }}>No patients found matching your search.</div>
                 </div>
               ) : (
-                <div style={{ overflowX: 'auto' }}>
+                <div className="table-responsive" style={{ overflowX: 'auto' }}>
                   <table style={s.table}>
                     <thead>
                       <tr>
@@ -578,7 +707,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div style={{ overflowX: 'auto' }}>
+              <div className="table-responsive" style={{ overflowX: 'auto' }}>
                 <table style={s.table}>
                   <thead>
                     <tr>
@@ -639,7 +768,7 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div style={{ overflowX: 'auto' }}>
+              <div className="table-responsive" style={{ overflowX: 'auto' }}>
                 <table style={s.table}>
                   <thead>
                     <tr>
@@ -691,7 +820,7 @@ export default function Dashboard() {
                 </p>
               </div>
 
-              <div style={s.mlMetricGrid}>
+              <div className="responsive-grid-4" style={s.mlMetricGrid}>
                 {[
                   { label: 'ALGORITHM', value: 'Isolation Forest', sub: 'Scikit-learn Unsupervised', color: '#A855F7' },
                   { label: 'ACCURACY', value: '91.8%', sub: 'Validated Test Split', color: '#10B981' },
@@ -712,7 +841,7 @@ export default function Dashboard() {
                 <div style={{ fontSize: '14px', fontWeight: '700', color: '#FFFFFF', marginBottom: '12px' }}>
                   Monitored Behavioral Dimensions
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                <div className="responsive-grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
                   {[
                     { dim: 'Login Hour (0-23)', desc: 'Flags off-hours clinical access (e.g. 3 AM)' },
                     { dim: 'Request Count', desc: 'Flags bulk record exfiltration attempts' },
@@ -807,6 +936,87 @@ function getPermissions(role) {
 }
 
 const s = {
+  mobileTopbar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '12px 16px',
+    background: '#0E172A',
+    borderBottom: '1px solid rgba(59, 130, 246, 0.2)',
+    position: 'sticky',
+    top: 0,
+    zIndex: 50
+  },
+  mobileMenuToggle: {
+    background: '#131F37',
+    border: '1px solid rgba(59, 130, 246, 0.3)',
+    color: '#93C5FD',
+    borderRadius: '8px',
+    padding: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer'
+  },
+  mobileLogoBadge: {
+    width: '28px',
+    height: '28px',
+    borderRadius: '6px',
+    background: 'linear-gradient(135deg, #1E40AF, #0D9488)',
+    color: '#FFFFFF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  userRoleBadgeMobile: {
+    fontSize: '10px',
+    fontFamily: 'var(--font-mono)',
+    fontWeight: '700',
+    padding: '4px 8px',
+    borderRadius: '6px',
+    border: '1px solid',
+    letterSpacing: '0.05em'
+  },
+  mobileSignOutBtn: {
+    background: 'rgba(239, 68, 68, 0.15)',
+    border: '1px solid rgba(239, 68, 68, 0.3)',
+    color: '#F87171',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '14px',
+    fontWeight: '700',
+    cursor: 'pointer'
+  },
+  mobileDrawerOverlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0, 0, 0, 0.7)',
+    backdropFilter: 'blur(4px)',
+    zIndex: 100,
+    display: 'flex'
+  },
+  mobileDrawer: {
+    width: '290px',
+    maxWidth: '85vw',
+    height: '100%',
+    background: '#0E172A',
+    borderRight: '1px solid rgba(59, 130, 246, 0.25)',
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '20px 16px',
+    boxShadow: '8px 0 30px rgba(0, 0, 0, 0.6)'
+  },
+  mobileCloseBtn: {
+    background: '#131F37',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    color: '#94A3B8',
+    borderRadius: '8px',
+    padding: '6px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer'
+  },
   layout: {
     display: 'flex',
     minHeight: '100vh',
@@ -981,14 +1191,17 @@ const s = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '18px 36px',
+    padding: '16px 20px',
     borderBottom: '1px solid rgba(59, 130, 246, 0.15)',
-    background: '#0E172A'
+    background: '#0E172A',
+    flexWrap: 'wrap',
+    gap: '12px'
   },
   topbarRight: {
     display: 'flex',
     alignItems: 'center',
-    gap: '14px'
+    gap: '12px',
+    flexWrap: 'wrap'
   },
   pepTag: {
     display: 'inline-flex',
@@ -1039,14 +1252,14 @@ const s = {
   },
   content: {
     flex: 1,
-    padding: '32px 36px',
+    padding: '20px 16px',
     overflowY: 'auto'
   },
   statsGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(4, 1fr)',
-    gap: '20px',
-    marginBottom: '24px'
+    gap: '14px',
+    marginBottom: '20px'
   },
   aptTriageGrid: {
     display: 'grid',

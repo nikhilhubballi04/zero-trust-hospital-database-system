@@ -168,12 +168,14 @@ const s = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '14px 32px',
+    padding: '12px 16px',
     borderBottom: '1px solid rgba(45, 125, 210, 0.15)',
     background: 'rgba(10, 15, 30, 0.85)',
     backdropFilter: 'blur(12px)',
     position: 'relative',
-    zIndex: 10
+    zIndex: 10,
+    flexWrap: 'wrap',
+    gap: '10px'
   },
   statusDot: {
     width: '8px',
@@ -208,7 +210,7 @@ const s = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '40px 20px',
+    padding: '24px 16px',
     position: 'relative',
     zIndex: 2
   },
@@ -216,7 +218,7 @@ const s = {
     background: '#0E172A',
     border: '1px solid rgba(59, 130, 246, 0.2)',
     borderRadius: '20px',
-    padding: '40px',
+    padding: '32px 24px',
     width: '100%',
     maxWidth: '460px',
     boxShadow: '0 24px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(37, 99, 235, 0.1)'

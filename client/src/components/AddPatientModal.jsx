@@ -24,15 +24,15 @@ export default function AddPatientModal({ onClose, onSuccess }) {
   }
 
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, backdropFilter:'blur(4px)' }}>
-      <div style={{ background:'var(--bg-card)', border:'1px solid var(--border-dark)', borderRadius:'16px', padding:'32px', width:'560px', maxWidth:'95vw' }}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'24px' }}>
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, backdropFilter:'blur(4px)', padding:'12px' }}>
+      <div style={{ background:'var(--bg-card)', border:'1px solid var(--border-dark)', borderRadius:'16px', padding:'24px 20px', width:'560px', maxWidth:'94vw', maxHeight:'90vh', overflowY:'auto' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px' }}>
           <h3 style={{ fontFamily:'var(--font-heading)', fontSize:'18px', fontWeight:'600', color:'var(--text-primary)' }}>Add New Patient</h3>
           <button onClick={onClose} style={{ background:'none', border:'none', color:'var(--text-secondary)', fontSize:'18px', cursor:'pointer' }}>✕</button>
         </div>
         {error && <div style={{ background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:'8px', padding:'10px 14px', color:'#FCA5A5', fontSize:'13px', marginBottom:'16px' }}>{error}</div>}
         <form onSubmit={submit}>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'14px', marginBottom:'24px' }}>
+          <div className="responsive-grid-2" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'14px', marginBottom:'24px' }}>
             {[
               { name:'name',       label:'Full Name *',    type:'text',   placeholder:'Patient full name',  required:true  },
               { name:'dob',        label:'Date of Birth *',type:'date',   placeholder:'',                   required:true  },
