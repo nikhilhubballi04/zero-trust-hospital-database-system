@@ -33,22 +33,6 @@ export default function Login() {
     }
   }
 
-  // Quick Demo Login presets for professors, examiners, and rapid testing
-  const demoAccounts = [
-    { label: 'Admin', role: 'admin', email: 'admin@hospital.com', pass: 'Admin@1234', color: '#F59E0B' },
-    { label: 'Doctor', role: 'doctor', email: 'doctor@hospital.com', pass: 'Doctor@1234', color: '#2D7DD2' },
-    { label: 'Nurse', role: 'nurse', email: 'nurse@hospital.com', pass: 'Nurse@1234', color: '#10B981' },
-    { label: 'Lab Tech', role: 'lab_tech', email: 'lab@hospital.com', pass: 'Lab@1234', color: '#8B5CF6' },
-    { label: 'Pharmacist', role: 'pharmacist', email: 'pharma@hospital.com', pass: 'Pharma@1234', color: '#EC4899' },
-    { label: 'IT Security', role: 'it_security', email: 'itsec@hospital.com', pass: 'ITSec@1234', color: '#EF4444' }
-  ];
-
-  function fillDemo(acc) {
-    setEmail(acc.email);
-    setPassword(acc.pass);
-    setError('');
-  }
-
   return (
     <div style={s.page}>
       <div style={s.gridBg} />
@@ -142,30 +126,6 @@ export default function Login() {
               {loading ? 'AUTHENTICATING & VERIFYING...' : 'SIGN IN TO WORKSTATION →'}
             </button>
           </form>
-
-          {/* Quick Demo Credentials Picker */}
-          <div style={s.demoSection}>
-            <div style={s.demoHeader}>
-              <span>QUICK DEMO ROLES (CLICK TO PREFILL)</span>
-            </div>
-            <div style={s.demoGrid}>
-              {demoAccounts.map(acc => (
-                <button 
-                  key={acc.role}
-                  type="button"
-                  onClick={() => fillDemo(acc)}
-                  style={{
-                    ...s.demoBtn,
-                    borderColor: `${acc.color}44`,
-                    background: email === acc.email ? `${acc.color}22` : 'rgba(255,255,255,0.03)'
-                  }}
-                >
-                  <span style={{ color: acc.color, fontWeight: '700' }}>●</span>
-                  <span>{acc.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* Footer Return Link */}
           <div style={{ marginTop: '24px', textAlign: 'center', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -387,36 +347,6 @@ const s = {
     cursor: 'pointer',
     boxShadow: '0 4px 14px rgba(37, 99, 235, 0.4)',
     marginTop: '6px'
-  },
-  demoSection: {
-    marginTop: '24px',
-    paddingTop: '20px',
-    borderTop: '1px solid rgba(59, 130, 246, 0.15)'
-  },
-  demoHeader: {
-    fontSize: '10px',
-    fontFamily: 'var(--font-mono)',
-    color: '#64748B',
-    letterSpacing: '0.08em',
-    marginBottom: '12px',
-    textAlign: 'center'
-  },
-  demoGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '8px'
-  },
-  demoBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 10px',
-    borderRadius: '8px',
-    border: '1px solid',
-    color: '#CBD5E1',
-    fontSize: '11px',
-    cursor: 'pointer',
-    justifyContent: 'center'
   },
   backBtn: {
     background: 'none',
