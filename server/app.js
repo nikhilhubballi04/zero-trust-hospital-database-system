@@ -21,6 +21,10 @@ app.use('/api/lab',          labRoutes);
 app.use('/api/admin',        adminRoutes);
 app.use('/api/appointments', appointmentRoutes);
 
+app.get('/', (req, res) => {
+  res.json({ message: "Mavaji's Hospital Zero Trust API is Online", status: 'OK', time: new Date() });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'Server is running', time: new Date() });
 });
