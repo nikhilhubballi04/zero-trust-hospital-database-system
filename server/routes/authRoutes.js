@@ -7,7 +7,7 @@ const allowRoles   = require('../middleware/rbacMiddleware');
 router.post('/login',          login);
 router.post('/face-login',     faceLogin);
 router.get('/enrolled-faces',  getEnrolledFaces);
-router.post('/enroll-face',    verifyToken, enrollFace);
+router.post('/enroll-face',    enrollFace);
 router.post('/register',       verifyToken, allowRoles('admin'), register);
 
 module.exports = router;

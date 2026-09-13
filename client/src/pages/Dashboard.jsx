@@ -84,6 +84,7 @@ export default function Dashboard() {
   const [showAddPatient, setShowAddPatient] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showFaceTestModal, setShowFaceTestModal] = useState(false);
+  const [faceModalMode, setFaceModalMode] = useState('unlock');
   const [faceScanSuccessMsg, setFaceScanSuccessMsg] = useState('');
 
   // Search & Filter states
@@ -515,31 +516,59 @@ export default function Dashboard() {
                     ))}
                   </div>
 
-                  {/* Biometric Face ID Test Button */}
+                  {/* Biometric Face ID Test & Enrollment Buttons */}
                   <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontSize: '12px', fontWeight: '600', color: '#FFFFFF' }}>Workstation Biometrics</div>
-                      <div style={{ fontSize: '11px', color: '#64748B' }}>Test camera optical recognition sensor</div>
+                      <div style={{ fontSize: '11px', color: '#64748B' }}>Real-time optical face matching against database template</div>
                     </div>
-                    <button
-                      onClick={() => setShowFaceTestModal(true)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '7px 14px',
-                        background: 'rgba(59, 130, 246, 0.15)',
-                        border: '1px solid rgba(59, 130, 246, 0.35)',
-                        borderRadius: '8px',
-                        color: '#60A5FA',
-                        fontSize: '12px',
-                        fontWeight: '600',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <span>📷</span>
-                      <span>Test / Re-scan Face ID</span>
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          setFaceModalMode('unlock');
+                          setShowFaceTestModal(true);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '7px 12px',
+                          background: 'rgba(59, 130, 246, 0.15)',
+                          border: '1px solid rgba(59, 130, 246, 0.35)',
+                          borderRadius: '8px',
+                          color: '#60A5FA',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <span>📷</span>
+                        <span>Test Face Unlock</span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setFaceModalMode('enroll');
+                          setShowFaceTestModal(true);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '7px 12px',
+                          background: 'rgba(124, 58, 237, 0.15)',
+                          border: '1px solid rgba(139, 92, 246, 0.35)',
+                          borderRadius: '8px',
+                          color: '#C4B5FD',
+                          fontSize: '12px',
+                          fontWeight: '600',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <span>⚙️</span>
+                        <span>Re-enroll Face ID</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -913,6 +942,7 @@ export default function Dashboard() {
         isOpen={showFaceTestModal}
         onClose={() => setShowFaceTestModal(false)}
         targetEmail={user.email}
+        initialMode={faceModalMode}
         onSuccess={(data) => {
           setShowFaceTestModal(false);
           setFaceScanSuccessMsg(`Biometric Face ID re-verified for ${data.user?.name || user.name} (${Math.round((data.matchScore || 0.994) * 100)}% confidence score)`);

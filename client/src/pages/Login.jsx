@@ -12,6 +12,7 @@ export default function Login() {
   const [time, setTime] = useState(new Date());
   const [showPassword, setShowPassword] = useState(false);
   const [showFaceModal, setShowFaceModal] = useState(false);
+  const [faceModalMode, setFaceModalMode] = useState('unlock');
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -139,7 +140,10 @@ export default function Login() {
           {/* Direct Phone-Style Face Unlock Button */}
           <button
             type="button"
-            onClick={() => setShowFaceModal(true)}
+            onClick={() => {
+              setFaceModalMode('unlock');
+              setShowFaceModal(true);
+            }}
             style={s.faceIdButton}
           >
             <span style={s.faceIdButtonIcon}>
@@ -155,6 +159,19 @@ export default function Login() {
               </svg>
             </span>
             <span>📱 UNLOCK WITH FACE RECOGNITION</span>
+          </button>
+
+          {/* Smartphone-style Set Up Face ID Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setFaceModalMode('enroll');
+              setShowFaceModal(true);
+            }}
+            style={s.faceSetupButton}
+          >
+            <span>⚙️</span>
+            <span>SET UP / ENROLL FACE ID IN DATABASE</span>
           </button>
 
           {/* Footer Return Link */}
@@ -179,6 +196,7 @@ export default function Login() {
         isOpen={showFaceModal}
         onClose={() => setShowFaceModal(false)}
         targetEmail={email}
+        initialMode={faceModalMode}
         onSuccess={(authData) => {
           login(authData.user, authData.token);
           navigate('/dashboard');
@@ -427,6 +445,26 @@ const s = {
     gap: '10px',
     transition: 'all 0.2s ease',
     boxShadow: '0 4px 14px rgba(16, 185, 129, 0.15)'
+  },
+  faceSetupButton: {
+    width: '100%',
+    padding: '11px',
+    background: 'rgba(124, 58, 237, 0.15)',
+    border: '1px solid rgba(139, 92, 246, 0.35)',
+    borderRadius: '10px',
+    color: '#C4B5FD',
+    fontSize: '11px',
+    fontWeight: '700',
+    fontFamily: 'var(--font-mono)',
+    letterSpacing: '0.04em',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    marginTop: '10px',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 4px 14px rgba(124, 58, 237, 0.12)'
   },
   faceIdButtonIcon: {
     display: 'flex',
