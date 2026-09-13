@@ -172,6 +172,8 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
   const negativeStreakRef = useRef(0);
   const smoothedBoxRef = useRef(null);
   const authTriggeredRef = useRef(false);
+  const scanStepRef = useRef('init');
+  const matchScoreRef = useRef(0);
 
   const [scanStep, setScanStep] = useState('init'); // init, searching, detected, scanning, analyzing, verified, error
   const [statusText, setStatusText] = useState('Initializing biometric optical sensor...');
@@ -183,6 +185,7 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
   const [matchScore, setMatchScore] = useState(0);
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceBox, setFaceBox] = useState(null);
+  const [verifiedAuthData, setVerifiedAuthData] = useState(null);
 
   // Load enrolled clinical staff profiles
   useEffect(() => {
@@ -242,11 +245,6 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
     if (authTriggeredRef.current) return;
     authTriggeredRef.current = true;
 
-    if (loopRef.current) {
-      clearInterval(loopRef.current);
-      loopRef.current = null;
-    }
-
     try {
       const emailToUse = selectedStaffEmail || targetEmail || 'doctor@hospital.com';
       const res = await faceLoginUser({
@@ -254,21 +252,22 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
         confidence: computedScore
       });
 
+      setVerifiedAuthData(res.data);
       setScanStep('verified');
-      setStatusText(`Biometric Verified (${computedScore}%) · ${res.data.user.name}`);
+      scanStepRef.current = 'verified';
+      matchScoreRef.current = computedScore;
+      setStatusText(`✓ Biometric Verified (${computedScore}%) · Continuous Monitoring Active`);
       setProgress(100);
       playBiometricChime();
 
-      setTimeout(() => {
-        stopCamera();
-        onSuccess(res.data);
-      }, 1200);
+      // CONTINUOUS CAMERA: Camera stays ON continuously! Do not stop camera!
     } catch (err) {
       setScanStep('error');
+      scanStepRef.current = 'error';
       setStatusText(err.response?.data?.message || 'Biometric profile match failed.');
       authTriggeredRef.current = false;
     }
-  }, [selectedStaffEmail, targetEmail, onSuccess, stopCamera]);
+  }, [selectedStaffEmail, targetEmail]);
 
   // Real-time live frame detection loop with temporal smoothing (zero flicker)
   const startLiveFrameAnalysis = useCallback(() => {
@@ -284,7 +283,6 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) return;
-      if (authTriggeredRef.current) return;
 
       const sw = 160;
       const sh = 120;
@@ -319,6 +317,31 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
       if (!result) {
         const imgData = ctx.getImageData(0, 0, sw, sh);
         result = analyzeVideoFrame(imgData.data, sw, sh);
+      }
+
+      // CONTINUOUS CAMERA MODE: If already verified, keep camera running and actively track face presence!
+      if (scanStepRef.current === 'verified') {
+        if (result.detected) {
+          const nx = (result.box.x / sw) * 100;
+          const ny = (result.box.y / sh) * 100;
+          const nw = (result.box.width / sw) * 100;
+          const nh = (result.box.height / sh) * 100;
+          if (smoothedBoxRef.current) {
+            smoothedBoxRef.current = {
+              nx: smoothedBoxRef.current.nx * 0.75 + nx * 0.25,
+              ny: smoothedBoxRef.current.ny * 0.75 + ny * 0.25,
+              nw: smoothedBoxRef.current.nw * 0.75 + nw * 0.25,
+              nh: smoothedBoxRef.current.nh * 0.75 + nh * 0.25,
+            };
+            setFaceBox({ ...smoothedBoxRef.current });
+          }
+          setFaceDetected(true);
+          setStatusText(`✓ Clinical Presence Active · Verified (${matchScoreRef.current}%)`);
+        } else {
+          setFaceDetected(false);
+          setStatusText(result.message);
+        }
+        return;
       }
 
       // 3. Temporal Hysteresis Filter (eliminates visual flicker)
@@ -706,6 +729,27 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
 
         {/* Action Buttons */}
         <div style={styles.actions}>
+          {scanStep === 'verified' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <button
+                onClick={() => {
+                  stopCamera();
+                  if (verifiedAuthData) onSuccess(verifiedAuthData);
+                }}
+                style={styles.proceedBtn}
+                type="button"
+              >
+                <span>✓</span>
+                <span>Proceed to Workstation Portal</span>
+              </button>
+
+              <div style={styles.continuousBadge}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10B981', boxShadow: '0 0 8px #10B981' }} />
+                <span>CONTINUOUS CAMERA ON · LIVE OPTICAL TELEMETRY</span>
+              </div>
+            </div>
+          )}
+
           {!cameraActive && scanStep !== 'verified' && (
             <button
               onClick={handleSimulateScan}
@@ -720,6 +764,7 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
             <button
               onClick={() => {
                 setScanStep('searching');
+                scanStepRef.current = 'searching';
                 authTriggeredRef.current = false;
                 startLiveFrameAnalysis();
               }}
@@ -735,7 +780,7 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
             style={styles.cancelBtn}
             type="button"
           >
-            Cancel / Use Password
+            {scanStep === 'verified' ? 'Close Camera' : 'Cancel / Use Password'}
           </button>
         </div>
 
@@ -983,5 +1028,35 @@ const styles = {
     color: '#94A3B8',
     fontSize: '12px',
     cursor: 'pointer'
+  },
+  proceedBtn: {
+    width: '100%',
+    padding: '13px',
+    background: 'linear-gradient(135deg, #10B981, #059669)',
+    border: 'none',
+    borderRadius: '10px',
+    color: '#FFFFFF',
+    fontSize: '14px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    boxShadow: '0 4px 16px rgba(16, 185, 129, 0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px'
+  },
+  continuousBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    padding: '8px',
+    background: 'rgba(16, 185, 129, 0.1)',
+    border: '1px solid rgba(16, 185, 129, 0.25)',
+    borderRadius: '8px',
+    fontSize: '11px',
+    color: '#34D399',
+    fontWeight: '600',
+    fontFamily: 'var(--font-mono)'
   }
 };
