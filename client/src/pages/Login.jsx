@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loginUser } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import FaceUnlockModal from '../components/FaceUnlockModal';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -10,6 +11,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(new Date());
   const [showPassword, setShowPassword] = useState(false);
+  const [showFaceModal, setShowFaceModal] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -127,6 +129,34 @@ export default function Login() {
             </button>
           </form>
 
+          {/* Biometric Face ID Option Divider */}
+          <div style={s.orDivider}>
+            <span style={s.orLine} />
+            <span style={s.orText}>BIOMETRIC ZERO TRUST UNLOCK</span>
+            <span style={s.orLine} />
+          </div>
+
+          {/* Direct Phone-Style Face Unlock Button */}
+          <button
+            type="button"
+            onClick={() => setShowFaceModal(true)}
+            style={s.faceIdButton}
+          >
+            <span style={s.faceIdButtonIcon}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+                <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+                <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                <circle cx="9" cy="9" r="1" fill="currentColor" />
+                <circle cx="15" cy="9" r="1" fill="currentColor" />
+                <path d="M9 15c1.5 1 4.5 1 6 0" />
+                <line x1="12" y1="11" x2="12" y2="12" />
+              </svg>
+            </span>
+            <span>📱 UNLOCK WITH FACE RECOGNITION</span>
+          </button>
+
           {/* Footer Return Link */}
           <div style={{ marginTop: '24px', textAlign: 'center', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <button onClick={() => navigate('/')} style={s.backBtn}>
@@ -143,6 +173,17 @@ export default function Login() {
 
         </div>
       </div>
+
+      {/* Smartphone Face ID Biometric Camera Modal */}
+      <FaceUnlockModal
+        isOpen={showFaceModal}
+        onClose={() => setShowFaceModal(false)}
+        targetEmail={email}
+        onSuccess={(authData) => {
+          login(authData.user, authData.token);
+          navigate('/dashboard');
+        }}
+      />
     </div>
   );
 }
@@ -349,6 +390,48 @@ const s = {
     cursor: 'pointer',
     boxShadow: '0 4px 14px rgba(37, 99, 235, 0.4)',
     marginTop: '6px'
+  },
+  orDivider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    margin: '18px 0 16px'
+  },
+  orLine: {
+    flex: 1,
+    height: '1px',
+    background: 'rgba(59, 130, 246, 0.2)'
+  },
+  orText: {
+    fontSize: '10px',
+    fontFamily: 'var(--font-mono)',
+    color: '#64748B',
+    letterSpacing: '0.08em',
+    fontWeight: '600'
+  },
+  faceIdButton: {
+    width: '100%',
+    padding: '13px',
+    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(13, 148, 136, 0.25))',
+    border: '1px solid rgba(16, 185, 129, 0.4)',
+    borderRadius: '10px',
+    color: '#34D399',
+    fontSize: '12px',
+    fontWeight: '700',
+    fontFamily: 'var(--font-mono)',
+    letterSpacing: '0.06em',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 4px 14px rgba(16, 185, 129, 0.15)'
+  },
+  faceIdButtonIcon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   backBtn: {
     background: 'none',

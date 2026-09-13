@@ -36,3 +36,6 @@ export const getAppointments         = ()           => API.get('/appointments');
 export const updateAppointmentStatus = (id, status) => API.put(`/appointments/${id}/status`, { status });
 export const addPatient              = (data)       => API.post('/admin/patients', data);
 export const runMLCheck              = (data)       => axios.post('http://localhost:5001/predict', data);
+export const faceLoginUser           = (data)       => API.post('/auth/face-login', data);
+export const getEnrolledFaces        = ()           => API.get('/auth/enrolled-faces');
+export const enrollFaceBiometric     = (data)       => API.post('/auth/enroll-face', data);

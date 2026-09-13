@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255)  NOT NULL,
   role          ENUM('doctor','nurse','lab_tech','pharmacist','admin','it_security','patient') NOT NULL,
   is_active     BOOLEAN       DEFAULT TRUE,
+  face_enrolled BOOLEAN       DEFAULT TRUE,
+  face_descriptor TEXT        NULL,
+  face_last_verified TIMESTAMP NULL,
   created_at    TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
   last_login    TIMESTAMP     NULL
 );

@@ -112,6 +112,44 @@ input, button, select, textarea {
   animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Biometric Face ID Scanning Animations */
+@keyframes faceScanRadar {
+  0% {
+    top: 5%;
+    opacity: 0.3;
+  }
+  50% {
+    top: 88%;
+    opacity: 1;
+  }
+  100% {
+    top: 5%;
+    opacity: 0.3;
+  }
+}
+
+@keyframes reticleGlow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3), inset 0 0 15px rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 35px rgba(16, 185, 129, 0.6), inset 0 0 25px rgba(16, 185, 129, 0.3);
+    border-color: rgba(16, 185, 129, 0.8);
+  }
+}
+
+@keyframes reticleSuccess {
+  0%   { transform: scale(0.95); }
+  50%  { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+@keyframes landmarkPulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50%      { transform: scale(1.4); opacity: 1; }
+}
+
 /* Common Interactive Classes */
 .clickable-card {
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
