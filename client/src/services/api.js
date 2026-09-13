@@ -39,3 +39,20 @@ export const runMLCheck              = (data)       => axios.post('http://localh
 export const faceLoginUser           = (data)       => API.post('/auth/face-login', data);
 export const getEnrolledFaces        = ()           => API.get('/auth/enrolled-faces');
 export const enrollFaceBiometric     = (data)       => API.post('/auth/enroll-face', data);
+
+// Dynamic Roles & RBAC Management
+export const getPublicRoles          = ()           => API.get('/auth/roles');
+export const getAdminRoles           = ()           => API.get('/admin/roles');
+export const createAdminRole         = (data)       => API.post('/admin/roles', data);
+export const updateAdminRole         = (roleId, data) => API.put(`/admin/roles/${roleId}`, data);
+export const deleteAdminRole         = (roleId)     => API.delete(`/admin/roles/${roleId}`);
+
+// Staff Account & Login Governance
+export const updateStaffRole         = (userId, role) => API.put(`/admin/users/${userId}/role`, { role });
+export const toggleStaffStatus       = (userId)     => API.put(`/admin/users/${userId}/toggle-status`);
+export const resetStaffFace          = (userId)     => API.post(`/admin/users/${userId}/reset-face`);
+
+// Global Security Policies & Real-Time Login Stream
+export const getSecuritySettings     = ()           => API.get('/admin/security-settings');
+export const updateSecuritySetting   = (data)       => API.put('/admin/security-settings', data);
+export const getLoginActivity        = ()           => API.get('/admin/login-activity');

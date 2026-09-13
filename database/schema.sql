@@ -11,11 +11,12 @@ CREATE TABLE IF NOT EXISTS users (
   name          VARCHAR(100)  NOT NULL,
   email         VARCHAR(150)  NOT NULL UNIQUE,
   password_hash VARCHAR(255)  NOT NULL,
-  role          ENUM('doctor','nurse','lab_tech','pharmacist','admin','it_security','patient') NOT NULL,
+  role          VARCHAR(50)   NOT NULL DEFAULT 'patient',
   is_active     BOOLEAN       DEFAULT TRUE,
   face_enrolled BOOLEAN       DEFAULT TRUE,
   face_descriptor TEXT        NULL,
   face_last_verified TIMESTAMP NULL,
+  must_re_enroll_face BOOLEAN DEFAULT FALSE,
   created_at    TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
   last_login    TIMESTAMP     NULL
 );
@@ -114,6 +115,39 @@ CREATE TABLE IF NOT EXISTS appointments (
   status         ENUM('pending','confirmed','cancelled') DEFAULT 'pending',
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 9. Dynamic Roles & Permissions Matrix Table
+CREATE TABLE IF NOT EXISTS roles (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  display_name VARCHAR(100) NOT NULL,
+  description TEXT,
+  clearance_level VARCHAR(50) DEFAULT 'Level 2 · General Staff',
+  color VARCHAR(20) DEFAULT '#3B82F6',
+  can_access_ehr BOOLEAN DEFAULT FALSE,
+  can_access_lab BOOLEAN DEFAULT FALSE,
+  can_access_pharmacy BOOLEAN DEFAULT FALSE,
+  can_access_appointments BOOLEAN DEFAULT FALSE,
+  can_access_admin BOOLEAN DEFAULT FALSE,
+  can_access_security BOOLEAN DEFAULT FALSE,
+  is_system BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 10. System Security Policies Table
+CREATE TABLE IF NOT EXISTS system_settings (
+  setting_key VARCHAR(100) PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  description VARCHAR(255),
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Seed Default Security Policies
+INSERT INTO system_settings (setting_key, setting_value, description)
+VALUES
+  ('require_face_id_all', 'true', 'Enforce mandatory Face ID biometric verification for all staff logins'),
+  ('emergency_lockdown', 'false', 'Emergency lockdown: block all non-admin logins immediately')
+ON DUPLICATE KEY UPDATE setting_key = setting_key;
 
 -- Default Admin User (Password: Admin@1234)
 INSERT INTO users (name, email, password_hash, role) VALUES

@@ -4,11 +4,22 @@ const jwt       = require('jsonwebtoken');
 const logAccess = require('../utils/logger');
 require('dotenv').config();
 
+async function getSetting(key) {
+  try {
+    const [rows] = await pool.execute('SELECT setting_value FROM system_settings WHERE setting_key = ?', [key]);
+    return rows.length > 0 ? rows[0].setting_value : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 async function register(req, res) {
-  const { name, email, password, role } = req.body;
+  const { name, email, password, role, faceDescriptor } = req.body;
+  const ip     = req.ip;
+  const device = req.headers['user-agent'];
 
   if (!name || !email || !password || !role) {
-    return res.status(400).json({ message: 'All fields are required' });
+    return res.status(400).json({ message: 'Name, email, password, and assigned role are required.' });
   }
 
   try {
@@ -16,20 +27,49 @@ async function register(req, res) {
       'SELECT id FROM users WHERE email = ?', [email]
     );
     if (existing.length > 0) {
-      return res.status(409).json({ message: 'Email already registered' });
+      return res.status(409).json({ message: 'Email address is already registered in the hospital directory.' });
     }
 
     const password_hash = await bcrypt.hash(password, 10);
+    const descriptorStr = faceDescriptor ? (typeof faceDescriptor === 'string' ? faceDescriptor : JSON.stringify(faceDescriptor)) : null;
+    const faceEnrolled = Boolean(faceDescriptor);
 
-    await pool.execute(
-      'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)',
-      [name, email, password_hash, role]
+    const [result] = await pool.execute(
+      'INSERT INTO users (name, email, password_hash, role, face_enrolled, face_descriptor, face_last_verified) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [name, email, password_hash, role, faceEnrolled, descriptorStr, faceEnrolled ? new Date() : null]
     );
 
-    res.status(201).json({ message: 'User registered successfully' });
+    await logAccess({
+      userId: result.insertId,
+      role,
+      action: 'STAFF_REGISTERED',
+      resource: '/api/auth/register',
+      ip,
+      device,
+      outcome: 'success'
+    });
+
+    if (faceEnrolled) {
+      await logAccess({
+        userId: result.insertId,
+        role,
+        action: 'BIOMETRIC_FACE_ENROLL',
+        resource: '/api/auth/register',
+        ip,
+        device,
+        outcome: 'success'
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Staff account successfully registered for ${name} with role ${role.toUpperCase()} and enrolled Face ID!`,
+      userId: result.insertId,
+      faceEnrolled
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Registration error:', err);
+    res.status(500).json({ message: 'Server error during staff registration' });
   }
 }
 
@@ -44,7 +84,7 @@ async function login(req, res) {
 
   try {
     const [rows] = await pool.execute(
-      'SELECT * FROM users WHERE email = ? AND is_active = true', [email]
+      'SELECT * FROM users WHERE email = ?', [email]
     );
 
     if (rows.length === 0) {
@@ -53,6 +93,42 @@ async function login(req, res) {
     }
 
     const user = rows[0];
+
+    // Check if account is locked by admin
+    if (user.is_active === 0 || user.is_active === false) {
+      await logAccess({ userId: user.id, role: user.role, action: 'LOGIN_LOCKED_ATTEMPT', ip, device, outcome: 'denied' });
+      return res.status(403).json({
+        message: 'Your account has been locked by the Administrator. Please contact IT Security.'
+      });
+    }
+
+    // Check emergency lockdown policy
+    const lockdown = await getSetting('emergency_lockdown');
+    if (lockdown === 'true' && user.role !== 'admin') {
+      await logAccess({ userId: user.id, role: user.role, action: 'LOGIN_LOCKDOWN_BLOCKED', ip, device, outcome: 'denied' });
+      return res.status(403).json({
+        message: 'Emergency Hospital Lockdown Active. Non-administrator logins are temporarily suspended.'
+      });
+    }
+
+    // Check if hospital policy enforces mandatory Face ID for staff (root admin retains emergency password override)
+    const requireFaceId = await getSetting('require_face_id_all');
+    if (requireFaceId === 'true' && user.role !== 'admin' && user.role !== 'patient') {
+      await logAccess({ userId: user.id, role: user.role, action: 'LOGIN_FACE_ID_REQUIRED', ip, device, outcome: 'denied' });
+      return res.status(403).json({
+        message: 'Hospital Zero Trust Policy: Mandatory Face ID biometric verification required for staff login.',
+        requireFaceId: true
+      });
+    }
+
+    // Check if admin required face re-enrollment
+    if (user.must_re_enroll_face) {
+      return res.status(400).json({
+        message: `Administrator has requested mandatory Face ID re-enrollment for ${user.name}. Please re-register your face.`,
+        requiresEnrollment: true
+      });
+    }
+
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
 
     if (!passwordMatch) {
@@ -115,7 +191,7 @@ async function faceLogin(req, res) {
   const device = req.headers['user-agent'];
 
   try {
-    let query = 'SELECT * FROM users WHERE is_active = true';
+    let query = 'SELECT * FROM users WHERE 1=1';
     let params = [];
 
     if (email) {
@@ -125,7 +201,7 @@ async function faceLogin(req, res) {
       query += ' AND id = ?';
       params.push(staffId);
     } else {
-      query += ' AND role IN ("doctor", "admin", "nurse", "it_security")';
+      query += ' AND role != "patient"';
     }
 
     const [rows] = await pool.execute(query, params);
@@ -137,8 +213,25 @@ async function faceLogin(req, res) {
 
     const user = rows[0];
 
-    // Check if Face ID has been set up in the database
-    if (!user.face_descriptor) {
+    // Check if account is locked by admin
+    if (user.is_active === 0 || user.is_active === false) {
+      await logAccess({ userId: user.id, role: user.role, action: 'FACE_LOGIN_LOCKED_ATTEMPT', ip, device, outcome: 'denied' });
+      return res.status(403).json({
+        message: 'Your account has been locked by the Administrator. Please contact IT Security.'
+      });
+    }
+
+    // Check emergency lockdown policy
+    const lockdown = await getSetting('emergency_lockdown');
+    if (lockdown === 'true' && user.role !== 'admin') {
+      await logAccess({ userId: user.id, role: user.role, action: 'FACE_LOGIN_LOCKDOWN_BLOCKED', ip, device, outcome: 'denied' });
+      return res.status(403).json({
+        message: 'Emergency Hospital Lockdown Active. Non-administrator logins are temporarily suspended.'
+      });
+    }
+
+    // Check if admin required face re-enrollment
+    if (user.must_re_enroll_face || !user.face_descriptor) {
       await logAccess({
         userId: user.id,
         role: user.role,
@@ -149,7 +242,9 @@ async function faceLogin(req, res) {
         outcome: 'failed'
       });
       return res.status(400).json({
-        message: `Face ID has not been set up yet for ${user.name}. Please set up Face ID first.`,
+        message: user.must_re_enroll_face
+          ? `Administrator has requested mandatory Face ID re-enrollment for ${user.name}. Please re-register your face.`
+          : `Face ID has not been set up yet for ${user.name}. Please set up Face ID first.`,
         requiresEnrollment: true,
         user: { id: user.id, name: user.name, email: user.email, role: user.role }
       });
@@ -270,7 +365,7 @@ async function enrollFace(req, res) {
     const descriptorStr = typeof faceDescriptor === 'string' ? faceDescriptor : JSON.stringify(faceDescriptor);
 
     await pool.execute(
-      'UPDATE users SET face_enrolled = TRUE, face_descriptor = ?, face_last_verified = NOW() WHERE id = ?',
+      'UPDATE users SET face_enrolled = TRUE, face_descriptor = ?, face_last_verified = NOW(), must_re_enroll_face = FALSE WHERE id = ?',
       [descriptorStr, targetUser.id]
     );
 
@@ -314,4 +409,16 @@ async function getEnrolledFaces(req, res) {
   }
 }
 
-module.exports = { register, login, faceLogin, enrollFace, getEnrolledFaces };
+async function getPublicRoles(req, res) {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT id, name, display_name, description, clearance_level, color FROM roles ORDER BY id ASC'
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('getPublicRoles error:', err);
+    res.status(500).json({ message: 'Failed to fetch roles directory' });
+  }
+}
+
+module.exports = { register, login, faceLogin, enrollFace, getEnrolledFaces, getPublicRoles };

@@ -30,7 +30,17 @@ export default function Login() {
       login(res.data.user, res.data.token);
       navigate('/dashboard');
     } catch (err) {
-      setError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
+      if (err.response?.data?.requireFaceId) {
+        setError(err.response.data.message);
+        setFaceModalMode('unlock');
+        setShowFaceModal(true);
+      } else if (err.response?.data?.requiresEnrollment) {
+        setError(err.response.data.message);
+        setFaceModalMode('enroll');
+        setShowFaceModal(true);
+      } else {
+        setError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
+      }
     } finally {
       setLoading(false);
     }
@@ -171,8 +181,33 @@ export default function Login() {
             style={s.faceSetupButton}
           >
             <span>⚙️</span>
-            <span>SET UP / ENROLL FACE ID IN DATABASE</span>
+            <span>SET UP / RE-ENROLL FACE ID IN DATABASE</span>
           </button>
+
+          {/* New Staff Registration & Face ID Onboarding */}
+          <div style={{ marginTop: '16px', padding: '12px 14px', background: 'rgba(37, 99, 235, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '10px', textAlign: 'center' }}>
+            <div style={{ fontSize: '11px', color: '#93C5FD', fontWeight: '600', marginBottom: '6px' }}>
+              NEW CLINICAL OR TECHNICAL STAFF MEMBER?
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/register')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#60A5FA',
+                fontSize: '13px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <span>👤 Register Account & Enroll Face ID</span>
+              <span>→</span>
+            </button>
+          </div>
 
           {/* Footer Return Link */}
           <div style={{ marginTop: '24px', textAlign: 'center', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
