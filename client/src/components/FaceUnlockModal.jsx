@@ -382,14 +382,23 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
           throw new Error('Webcam media devices not supported in this browser.');
         }
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'user',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          },
-          audio: false
-        });
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: 'user',
+              width: { ideal: 640 },
+              height: { ideal: 480 }
+            },
+            audio: false
+          });
+        } catch (e1) {
+          // Fallback if specific resolution or facingMode is not accepted
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false
+          });
+        }
 
         if (!isMounted) {
           stream.getTracks().forEach(t => t.stop());
@@ -397,16 +406,28 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
         }
 
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = () => {
-            videoRef.current.play().catch(() => {});
-            setCameraActive(true);
-            setScanStep('searching');
-            setStatusText('Optical sensor active · Looking for clinical face...');
-            startLiveFrameAnalysis();
-          };
-        }
+
+        const attachStream = async () => {
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            try {
+              await videoRef.current.play();
+            } catch (playErr) {
+              console.warn('Video play error:', playErr);
+            }
+            if (isMounted) {
+              setCameraActive(true);
+              setScanStep('searching');
+              setStatusText('Optical sensor active · Looking for clinical face...');
+              startLiveFrameAnalysis();
+            }
+          }
+        };
+
+        // Attach immediately or after next paint
+        attachStream();
+        setTimeout(attachStream, 80);
+
       } catch (err) {
         console.warn('Camera stream error:', err);
         setCameraError(
@@ -508,16 +529,20 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
             boxShadow: reticleGlow
           }}>
 
-            {/* Live Camera Stream */}
-            {cameraActive ? (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                style={styles.video}
-              />
-            ) : (
+            {/* Live Camera Video - ALWAYS rendered in DOM so videoRef.current is never null */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              style={{
+                ...styles.video,
+                display: cameraActive ? 'block' : 'none'
+              }}
+            />
+
+            {/* Standby Placeholder */}
+            {!cameraActive && (
               <div style={styles.placeholderFace}>
                 <div style={{
                   fontSize: '54px',
