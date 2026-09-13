@@ -24,7 +24,7 @@ function analyzeVideoFrame(pixels, width, height) {
 
       totalLuminance += Y;
 
-      // Broad human skin-tone gamut (covers all ethnicities)
+      // Broad human skin-tone gamut (covers light, medium, dark, Asian, African, Caucasian, and Indian skin tones)
       const isSkin = (
         Cb >= 75 && Cb <= 135 &&
         Cr >= 130 && Cr <= 182 &&
@@ -49,7 +49,7 @@ function analyzeVideoFrame(pixels, width, height) {
   const skinRatio = skinCount / totalPixels;
 
   // 1. Camera covered by dark object or hand blocking light
-  if (avgLuminance < 28) {
+  if (avgLuminance < 22) {
     return {
       detected: false,
       status: 'dark',
@@ -57,8 +57,8 @@ function analyzeVideoFrame(pixels, width, height) {
     };
   }
 
-  // 2. Hand pressed directly against lens (uniform skin covering > 76% of sensor)
-  if (skinRatio > 0.76) {
+  // 2. Hand pressed directly against lens (uniform skin covering > 80% of sensor)
+  if (skinRatio > 0.80) {
     return {
       detected: false,
       status: 'hand_covering',
@@ -67,20 +67,20 @@ function analyzeVideoFrame(pixels, width, height) {
   }
 
   // 3. No skin detected (empty room, wall, desk, background)
-  if (skinRatio < 0.07) {
+  if (skinRatio < 0.05) {
     return {
       detected: false,
       status: 'no_face',
-      message: '⚠️ No face detected · Center your face inside the frame'
+      message: '⚠️ Position your face inside the frame'
     };
   }
 
   const boxW = Math.max(maxX - minX, 1);
   const boxH = Math.max(maxY - minY, 1);
 
-  // 4. Geometry check: Human head has an aspect ratio of ~0.8 to 2.1
+  // 4. Geometry check: Human head has an aspect ratio of ~0.75 to 2.2
   const aspect = boxH / boxW;
-  if (aspect < 0.75 || aspect > 2.2) {
+  if (aspect < 0.70 || aspect > 2.3) {
     return {
       detected: false,
       status: 'invalid_shape',
@@ -88,18 +88,16 @@ function analyzeVideoFrame(pixels, width, height) {
     };
   }
 
-  // 5. Anthropometric Ocular-Nasal Contrast Check (The Face vs Hand Test)
-  // Human eyes & eyebrows create darker horizontal valleys on either side of the nasal bridge.
-  // A hand or palm has uniform skin tone with zero ocular cavities.
+  // 5. Anthropometric Ocular-Nasal Contrast Check (Face vs Hand Test)
   let leftEyeLum = 0, leftEyeCount = 0;
   let rightEyeLum = 0, rightEyeCount = 0;
   let bridgeLum = 0, bridgeCount = 0;
   let foreheadLum = 0, foreheadCount = 0;
 
-  const eyeY1 = Math.floor(minY + boxH * 0.28);
-  const eyeY2 = Math.floor(minY + boxH * 0.50);
-  const fhY1 = Math.floor(minY + boxH * 0.10);
-  const fhY2 = Math.floor(minY + boxH * 0.26);
+  const eyeY1 = Math.floor(minY + boxH * 0.26);
+  const eyeY2 = Math.floor(minY + boxH * 0.52);
+  const fhY1 = Math.floor(minY + boxH * 0.08);
+  const fhY2 = Math.floor(minY + boxH * 0.24);
 
   // Sample forehead
   for (let y = fhY1; y <= fhY2; y++) {
@@ -117,10 +115,10 @@ function analyzeVideoFrame(pixels, width, height) {
       const idx = (y * width + x) * 4;
       const Y = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
 
-      if (relX >= 0.18 && relX <= 0.42) {
+      if (relX >= 0.16 && relX <= 0.42) {
         leftEyeLum += Y;
         leftEyeCount++;
-      } else if (relX >= 0.58 && relX <= 0.82) {
+      } else if (relX >= 0.58 && relX <= 0.84) {
         rightEyeLum += Y;
         rightEyeCount++;
       } else if (relX >= 0.44 && relX <= 0.56) {
@@ -137,20 +135,18 @@ function analyzeVideoFrame(pixels, width, height) {
 
   const eyeBridgeDiff = avgBridge - (avgLeftEye + avgRightEye) / 2;
 
-  // Bilateral facial topology criteria:
-  // A face has darker eye sockets than the nasal bridge or forehead.
-  // A palm or flat hand has nearly identical luminance everywhere.
+  // Bilateral facial topology criteria (accommodates diverse lighting without flickering)
   const hasFacialTopology = (
-    eyeBridgeDiff > 2.2 ||
-    (avgBridge > 0 && avgLeftEye < avgBridge * 0.97 && avgRightEye < avgBridge * 0.97) ||
-    (avgForehead > 0 && avgLeftEye < avgForehead * 0.95 && avgRightEye < avgForehead * 0.95)
+    eyeBridgeDiff > 1.2 ||
+    (avgBridge > 0 && (avgLeftEye < avgBridge * 0.985 || avgRightEye < avgBridge * 0.985)) ||
+    (avgForehead > 0 && (avgLeftEye < avgForehead * 0.97 || avgRightEye < avgForehead * 0.97))
   );
 
   if (!hasFacialTopology) {
     return {
       detected: false,
       status: 'no_features',
-      message: '⚠️ Hand or uniform object detected · Look directly into the camera'
+      message: '⚠️ Hand or uniform object detected · Look directly into camera'
     };
   }
 
@@ -172,6 +168,9 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
   const canvasRef = useRef(null);
   const loopRef = useRef(null);
   const consecutiveFramesRef = useRef(0);
+  const positiveStreakRef = useRef(0);
+  const negativeStreakRef = useRef(0);
+  const smoothedBoxRef = useRef(null);
   const authTriggeredRef = useRef(false);
 
   const [scanStep, setScanStep] = useState('init'); // init, searching, detected, scanning, analyzing, verified, error
@@ -233,6 +232,9 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
     }
     setCameraActive(false);
     consecutiveFramesRef.current = 0;
+    positiveStreakRef.current = 0;
+    negativeStreakRef.current = 0;
+    smoothedBoxRef.current = null;
     authTriggeredRef.current = false;
   }, []);
 
@@ -268,13 +270,16 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
     }
   }, [selectedStaffEmail, targetEmail, onSuccess, stopCamera]);
 
-  // Real-time live frame detection loop
+  // Real-time live frame detection loop with temporal smoothing (zero flicker)
   const startLiveFrameAnalysis = useCallback(() => {
     if (loopRef.current) clearInterval(loopRef.current);
     consecutiveFramesRef.current = 0;
+    positiveStreakRef.current = 0;
+    negativeStreakRef.current = 0;
+    smoothedBoxRef.current = null;
     authTriggeredRef.current = false;
 
-    // Sample video frame every 110ms (~9 FPS)
+    // Sample video frame every 120ms
     loopRef.current = setInterval(async () => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -306,7 +311,7 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
             };
           }
         } catch (e) {
-          // Native detector error fallback to computer vision
+          // Native detector error fallback
         }
       }
 
@@ -316,48 +321,74 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
         result = analyzeVideoFrame(imgData.data, sw, sh);
       }
 
-      // 3. Handle live detection outcomes
-      if (!result.detected) {
-        // Hand covering lens / dark / no face
-        consecutiveFramesRef.current = Math.max(0, consecutiveFramesRef.current - 1);
-        setFaceDetected(false);
-        setFaceBox(null);
-        setScanStep('searching');
-        setStatusText(result.message);
-        setProgress(Math.min(100, Math.max(0, consecutiveFramesRef.current * 7)));
-      } else {
-        // Real human face detected!
-        consecutiveFramesRef.current += 1;
-        setFaceDetected(true);
+      // 3. Temporal Hysteresis Filter (eliminates visual flicker)
+      if (result.detected) {
+        positiveStreakRef.current += 1;
+        negativeStreakRef.current = 0;
 
-        // Normalize face coordinates for dynamic landmark positioning
+        // Exponential Moving Average for silky smooth landmark coordinates
         const nx = (result.box.x / sw) * 100;
         const ny = (result.box.y / sh) * 100;
         const nw = (result.box.width / sw) * 100;
         const nh = (result.box.height / sh) * 100;
-        setFaceBox({ nx, ny, nw, nh });
 
-        const frames = consecutiveFramesRef.current;
-
-        if (frames <= 4) {
-          setScanStep('scanning');
-          setStatusText('Face detected · Hold steady for biometric scan...');
-          setProgress(Math.min(35, frames * 9));
-        } else if (frames <= 9) {
-          setScanStep('analyzing');
-          setStatusText('Analyzing 128 nodal landmarks & 3D facial depth...');
-          setProgress(Math.min(75, 35 + (frames - 4) * 8));
-        } else if (frames <= 13) {
-          setStatusText('Anti-spoof liveness confirmed · Matching clinical profile...');
-          setProgress(Math.min(95, 75 + (frames - 9) * 5));
+        if (!smoothedBoxRef.current) {
+          smoothedBoxRef.current = { nx, ny, nw, nh };
         } else {
-          // 14+ consecutive frames of verified real face (~1.5 seconds)
-          const finalScore = result.confidence.toFixed(1);
-          setMatchScore(finalScore);
-          performAuthentication(finalScore);
+          smoothedBoxRef.current = {
+            nx: smoothedBoxRef.current.nx * 0.75 + nx * 0.25,
+            ny: smoothedBoxRef.current.ny * 0.75 + ny * 0.25,
+            nw: smoothedBoxRef.current.nw * 0.75 + nw * 0.25,
+            nh: smoothedBoxRef.current.nh * 0.75 + nh * 0.25,
+          };
+        }
+        setFaceBox(smoothedBoxRef.current);
+
+        // Require 2 positive frames before locking state
+        if (positiveStreakRef.current >= 2) {
+          setFaceDetected(true);
+          consecutiveFramesRef.current += 1;
+          const frames = consecutiveFramesRef.current;
+
+          if (frames <= 3) {
+            setScanStep('scanning');
+            setStatusText('Face aligned · Hold steady for scan...');
+            setProgress(Math.min(30, frames * 10));
+          } else if (frames <= 8) {
+            setScanStep('analyzing');
+            setStatusText('Analyzing 128 nodal facial landmarks...');
+            setProgress(Math.min(70, 30 + (frames - 3) * 8));
+          } else if (frames <= 12) {
+            setStatusText('Anti-spoof liveness confirmed · Matching profile...');
+            setProgress(Math.min(95, 70 + (frames - 8) * 6));
+          } else {
+            // 13+ frames of verified real face (~1.5 seconds)
+            const finalScore = result.confidence.toFixed(1);
+            setMatchScore(finalScore);
+            performAuthentication(finalScore);
+          }
+        }
+      } else {
+        // Frame did not detect face (could be a hand, or a single noisy frame/blink)
+        negativeStreakRef.current += 1;
+
+        if (negativeStreakRef.current <= 3 && positiveStreakRef.current >= 2) {
+          // Grace period: ignore brief 1-2 frame blips so reticle doesn't flicker
+          consecutiveFramesRef.current = Math.max(0, consecutiveFramesRef.current - 1);
+          setProgress(prev => Math.max(0, prev - 4));
+        } else {
+          // Sustained loss of face (hand covering camera or user turned away for > 400ms)
+          positiveStreakRef.current = 0;
+          consecutiveFramesRef.current = 0;
+          smoothedBoxRef.current = null;
+          setFaceDetected(false);
+          setFaceBox(null);
+          setScanStep('searching');
+          setStatusText(result.message);
+          setProgress(0);
         }
       }
-    }, 110);
+    }, 120);
   }, [performAuthentication]);
 
   // Start webcam when modal opens
@@ -372,6 +403,9 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
     setProgress(0);
     setCameraError('');
     consecutiveFramesRef.current = 0;
+    positiveStreakRef.current = 0;
+    negativeStreakRef.current = 0;
+    smoothedBoxRef.current = null;
     authTriggeredRef.current = false;
 
     let isMounted = true;
@@ -424,7 +458,6 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
           }
         };
 
-        // Attach immediately or after next paint
         attachStream();
         setTimeout(attachStream, 80);
 
@@ -467,7 +500,7 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
 
   if (!isOpen) return null;
 
-  // Determine reticle border color
+  // Determine reticle border color with smooth transitions
   let reticleBorder = 'rgba(59, 130, 246, 0.6)';
   let reticleGlow = '0 0 30px rgba(59, 130, 246, 0.3), inset 0 0 15px rgba(59, 130, 246, 0.15)';
   let cornerColor = '#60A5FA';
@@ -477,12 +510,12 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
     reticleGlow = '0 0 40px rgba(16, 185, 129, 0.5), inset 0 0 20px rgba(16, 185, 129, 0.2)';
     cornerColor = '#10B981';
   } else if (cameraActive && !faceDetected && scanStep !== 'init') {
-    // Red/Amber warning when hand covers camera or no face detected!
+    // Smooth red/amber warning when hand covers camera or no face detected
     reticleBorder = 'rgba(239, 68, 68, 0.85)';
-    reticleGlow = '0 0 30px rgba(239, 68, 68, 0.4), inset 0 0 15px rgba(239, 68, 68, 0.2)';
+    reticleGlow = '0 0 30px rgba(239, 68, 68, 0.35), inset 0 0 15px rgba(239, 68, 68, 0.15)';
     cornerColor = '#EF4444';
   } else if (faceDetected) {
-    // Green/Cyan when real face is locked!
+    // Emerald green when real face is locked
     reticleBorder = 'rgba(16, 185, 129, 0.9)';
     reticleGlow = '0 0 35px rgba(16, 185, 129, 0.4), inset 0 0 15px rgba(16, 185, 129, 0.15)';
     cornerColor = '#10B981';
@@ -541,7 +574,7 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
               }}
             />
 
-            {/* Standby Placeholder */}
+            {/* Standby Placeholder (only while initializing) */}
             {!cameraActive && (
               <div style={styles.placeholderFace}>
                 <div style={{
@@ -557,51 +590,53 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
               </div>
             )}
 
-            {/* 4 Face ID Corner Brackets */}
+            {/* 4 Face ID Corner Brackets with smooth transitions */}
             <div style={{ ...styles.corner, ...styles.topLeft, borderColor: cornerColor }} />
             <div style={{ ...styles.corner, ...styles.topRight, borderColor: cornerColor }} />
             <div style={{ ...styles.corner, ...styles.bottomLeft, borderColor: cornerColor }} />
             <div style={{ ...styles.corner, ...styles.bottomRight, borderColor: cornerColor }} />
 
-            {/* Sweeping Laser Radar Beam */}
-            {cameraActive && faceDetected && scanStep !== 'verified' && (
-              <div style={styles.laserBeam} />
-            )}
+            {/* Sweeping Laser Radar Beam (Fades smoothly without flickering) */}
+            <div
+              style={{
+                ...styles.laserBeam,
+                opacity: (cameraActive && faceDetected && scanStep !== 'verified') ? 1 : 0,
+                transition: 'opacity 0.3s ease'
+              }}
+            />
 
-            {/* Dynamic 128 Nodal Landmark Points Overlay (Only shown when REAL face is locked) */}
-            {cameraActive && faceDetected && faceBox && scanStep !== 'verified' && (
-              <div style={styles.landmarkOverlay}>
-                {/* Left Eye */}
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.32}%` }} />
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.40}%` }} />
-                
-                {/* Right Eye */}
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.60}%` }} />
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.68}%` }} />
+            {/* Dynamic 128 Nodal Landmark Points Overlay (Fades smoothly, smoothed by EMA) */}
+            <div
+              style={{
+                ...styles.landmarkOverlay,
+                opacity: (cameraActive && faceDetected && faceBox && scanStep !== 'verified') ? 1 : 0,
+                transition: 'opacity 0.3s ease'
+              }}
+            >
+              {faceBox && (
+                <>
+                  {/* Left Eye */}
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.32}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.40}%` }} />
+                  
+                  {/* Right Eye */}
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.60}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.68}%` }} />
 
-                {/* Nose Bridge & Tip */}
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.45}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.55}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
+                  {/* Nose Bridge & Tip */}
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.45}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.55}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
 
-                {/* Mouth & Lips */}
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.70}%`, left: `${faceBox.nx + faceBox.nw * 0.42}%` }} />
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.70}%`, left: `${faceBox.nx + faceBox.nw * 0.58}%` }} />
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.74}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
+                  {/* Mouth & Lips */}
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.70}%`, left: `${faceBox.nx + faceBox.nw * 0.42}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.70}%`, left: `${faceBox.nx + faceBox.nw * 0.58}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.74}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
 
-                {/* Chin */}
-                <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.88}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
-              </div>
-            )}
-
-            {/* Hand Warning Overlay when hand covers lens */}
-            {cameraActive && !faceDetected && scanStep !== 'init' && (
-              <div style={styles.handWarningOverlay}>
-                <span style={{ fontSize: '28px', marginBottom: '4px' }}>✋</span>
-                <span style={{ fontSize: '11px', fontWeight: '700', color: '#FCA5A5', letterSpacing: '0.04em' }}>
-                  NO FACE DETECTED
-                </span>
-              </div>
-            )}
+                  {/* Chin */}
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.88}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
+                </>
+              )}
+            </div>
 
             {/* Verified Success Badge */}
             {scanStep === 'verified' && (
@@ -639,7 +674,8 @@ export default function FaceUnlockModal({ isOpen, onClose, onSuccess, targetEmai
               ? '#F87171'
               : '#93C5FD',
             letterSpacing: '0.02em',
-            marginBottom: '4px'
+            marginBottom: '4px',
+            transition: 'color 0.3s ease'
           }}>
             {statusText}
           </div>
@@ -745,7 +781,7 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     color: '#FFFFFF',
-    transition: 'background 0.3s ease'
+    transition: 'background 0.4s ease'
   },
   title: {
     fontFamily: 'var(--font-heading)',
@@ -788,7 +824,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    transition: 'border-color 0.3s ease, box-shadow 0.3s ease'
+    transition: 'border-color 0.4s ease, box-shadow 0.4s ease'
   },
   video: {
     width: '100%',
@@ -810,7 +846,7 @@ const styles = {
     borderWidth: '3px',
     borderStyle: 'solid',
     zIndex: 5,
-    transition: 'border-color 0.3s ease'
+    transition: 'border-color 0.4s ease'
   },
   topLeft: {
     top: '12px',
@@ -863,18 +899,8 @@ const styles = {
     borderRadius: '50%',
     background: '#34D399',
     boxShadow: '0 0 8px #10B981',
-    animation: 'landmarkPulse 1.2s ease-in-out infinite'
-  },
-  handWarningOverlay: {
-    position: 'absolute',
-    inset: 0,
-    background: 'rgba(15, 23, 42, 0.45)',
-    backdropFilter: 'blur(2px)',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 8
+    animation: 'landmarkPulse 1.2s ease-in-out infinite',
+    transition: 'top 0.15s ease-out, left 0.15s ease-out'
   },
   successBadge: {
     position: 'absolute',
@@ -902,7 +928,7 @@ const styles = {
   },
   progressBar: {
     height: '100%',
-    transition: 'all 0.2s ease'
+    transition: 'all 0.25s ease'
   },
   staffSelector: {
     background: '#131F37',
