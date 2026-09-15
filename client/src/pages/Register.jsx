@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { getPublicRoles, registerUser } from '../services/api';
-import { analyzeVideoFrame, extractFacialVector, averageVectors } from '../utils/faceBiometrics';
+import { detectFaceAI, loadFaceApiModels, averageVectors } from '../utils/faceBiometrics';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -88,6 +88,7 @@ export default function Register() {
     setCameraError('');
     setStatusMessage('Requesting camera access...');
     try {
+      loadFaceApiModels().catch(() => {});
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
@@ -111,57 +112,53 @@ export default function Register() {
     }
   }, []);
 
-  // Run real-time detection & sampling loop
+  // Run real-time detection & sampling loop powered by AI
   useEffect(() => {
     if (!cameraActive || step !== 2) return;
 
+    let isProcessing = false;
     let lastSampleTime = 0;
 
-    const processFrame = (timestamp) => {
+    const processFrame = async (timestamp) => {
       const video = videoRef.current;
-      const canvas = canvasRef.current;
 
-      if (video && canvas && video.readyState === 4) {
-        const width = 320;
-        const height = 240;
-        canvas.width = width;
-        canvas.height = height;
+      if (video && video.readyState >= 2 && video.videoWidth > 0 && !video.paused && !isProcessing) {
+        isProcessing = true;
+        try {
+          const analysis = await detectFaceAI(video);
 
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0, width, height);
+          if (analysis.detected) {
+            setDetectionStatus('locked');
+            setConfidence(Math.round(analysis.confidence));
+            setStatusMessage(analysis.message);
 
-        const imgData = ctx.getImageData(0, 0, width, height);
-        const analysis = analyzeVideoFrame(imgData.data, width, height);
+            // If user clicked start capture
+            if (isCapturing && samplesRef.current.length < 10) {
+              if (timestamp - lastSampleTime > 120) {
+                lastSampleTime = timestamp;
+                if (analysis.descriptor && analysis.descriptor.length === 128) {
+                  samplesRef.current = [...samplesRef.current, analysis.descriptor];
+                  setCapturedSamples([...samplesRef.current]);
 
-        if (analysis.detected) {
-          setDetectionStatus('locked');
-          setConfidence(Math.round(analysis.confidence));
-          setStatusMessage(analysis.message);
-
-          // If user clicked start capture or auto-capture when face is stable
-          if (isCapturing && samplesRef.current.length < 12) {
-            // Throttle sampling to 1 frame every 120ms
-            if (timestamp - lastSampleTime > 120) {
-              lastSampleTime = timestamp;
-              const vector = extractFacialVector(imgData.data, width, height, analysis.box);
-              if (vector) {
-                samplesRef.current = [...samplesRef.current, vector];
-                setCapturedSamples([...samplesRef.current]);
-
-                if (samplesRef.current.length >= 12) {
-                  // Capture complete! Average vectors
-                  const averaged = averageVectors(samplesRef.current);
-                  setFinalVector(averaged);
-                  setIsCapturing(false);
-                  setStatusMessage('✅ Face ID template successfully generated and calibrated!');
+                  if (samplesRef.current.length >= 10) {
+                    // Capture complete! Average 10 frames of 128-D vectors
+                    const averaged = averageVectors(samplesRef.current);
+                    setFinalVector(averaged);
+                    setIsCapturing(false);
+                    setStatusMessage('✅ Face ID template successfully generated and calibrated!');
+                  }
                 }
               }
             }
+          } else {
+            setDetectionStatus(analysis.status);
+            setConfidence(0);
+            setStatusMessage(analysis.message);
           }
-        } else {
-          setDetectionStatus(analysis.status);
-          setConfidence(0);
-          setStatusMessage(analysis.message);
+        } catch (err) {
+          console.error('Register face detection error:', err);
+        } finally {
+          isProcessing = false;
         }
       }
 
@@ -214,7 +211,7 @@ export default function Register() {
     setCapturedSamples([]);
     setFinalVector(null);
     setIsCapturing(true);
-    setStatusMessage('Hold still · Scanning 12 biometric landmark frames...');
+    setStatusMessage('Hold still · Scanning 10 deep neural FaceNet frames...');
   };
 
   // Reset Biometric Capture

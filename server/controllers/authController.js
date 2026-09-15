@@ -166,9 +166,43 @@ const BIOMETRIC_SCALES = [3.0, 1.0, 1.0, 1.0, 1.0, 2.0, 1.0, 20.0, 1.0, 1.0, 2.0
 
 function calculateBiometricMatch(liveDesc, enrolledDesc) {
   if (!Array.isArray(liveDesc) || !Array.isArray(enrolledDesc) || liveDesc.length === 0 || enrolledDesc.length === 0) {
-    return { isMatch: false, score: 0 };
+    return { isMatch: false, score: 0, normDist: 99 };
   }
+
+  // Version mismatch check: 128-D Deep Neural embedding vs 16-D legacy vector
+  if ((liveDesc.length >= 64 && enrolledDesc.length < 64) || (liveDesc.length < 64 && enrolledDesc.length >= 64)) {
+    return {
+      isMatch: false,
+      score: 0,
+      normDist: 99,
+      versionMismatch: true,
+      requiresReEnrollment: true,
+      message: 'Biometric template version mismatch. Please tap "Set Up Face ID" to re-enroll with AI.'
+    };
+  }
+
   const len = Math.min(liveDesc.length, enrolledDesc.length);
+
+  // 128-Dimensional Deep Neural Network Embeddings (FaceNet / ResNet)
+  if (len >= 64) {
+    let sumSq = 0;
+    for (let i = 0; i < len; i++) {
+      const diff = liveDesc[i] - enrolledDesc[i];
+      sumSq += diff * diff;
+    }
+    const dist = Math.sqrt(sumSq);
+    // Standard FaceNet distance threshold: <= 0.60 is match
+    const isMatch = dist <= 0.60;
+    // Map Euclidean distance to confidence percentage: dist 0.20 -> 95%, dist 0.40 -> 90%, dist 0.55 -> 86%
+    const score = Math.max(0, Math.min(99.8, parseFloat((100 - (dist * 25)).toFixed(1))));
+    return {
+      normDist: parseFloat(dist.toFixed(4)),
+      score,
+      isMatch
+    };
+  }
+
+  // 16-Dimensional Anthropometric Descriptors
   let sumSq = 0;
   for (let i = 0; i < len; i++) {
     const scale = BIOMETRIC_SCALES[i] || 1.0;
@@ -176,12 +210,11 @@ function calculateBiometricMatch(liveDesc, enrolledDesc) {
     sumSq += diff * diff;
   }
   const normDist = Math.sqrt(sumSq / len);
-  const score = Math.max(0, Math.min(99.6, 100 - (normDist * 320)));
-  const rounded = parseFloat(score.toFixed(1));
+  const score = Math.max(0, Math.min(99.6, parseFloat((100 - (normDist * 75)).toFixed(1))));
   return {
-    normDist,
-    score: rounded,
-    isMatch: rounded >= 85.0
+    normDist: parseFloat(normDist.toFixed(4)),
+    score,
+    isMatch: score >= 85.0
   };
 }
 
@@ -191,29 +224,132 @@ async function faceLogin(req, res) {
   const device = req.headers['user-agent'];
 
   try {
-    let query = 'SELECT * FROM users WHERE 1=1';
-    let params = [];
+    // 1. Check emergency lockdown policy first
+    const lockdown = await getSetting('emergency_lockdown');
 
-    if (email) {
-      query += ' AND email = ?';
-      params.push(email);
-    } else if (staffId) {
-      query += ' AND id = ?';
-      params.push(staffId);
-    } else {
-      query += ' AND role != "patient"';
+    let targetUser = null;
+    let matchResult = null;
+
+    // A. Specific User Lookup (1:1 Matching)
+    if (email || staffId) {
+      let query = 'SELECT * FROM users WHERE 1=1';
+      let params = [];
+      if (email) {
+        query += ' AND email = ?';
+        params.push(email);
+      } else {
+        query += ' AND id = ?';
+        params.push(staffId);
+      }
+
+      const [rows] = await pool.execute(query, params);
+      if (rows.length === 0) {
+        await logAccess({ action: 'BIOMETRIC_FACE_AUTH', ip, device, outcome: 'failed', resource: '/api/auth/face-login' });
+        return res.status(401).json({ message: 'Clinical account not found in hospital directory.' });
+      }
+      targetUser = rows[0];
+
+      if (targetUser.must_re_enroll_face || !targetUser.face_descriptor) {
+        await logAccess({
+          userId: targetUser.id,
+          role: targetUser.role,
+          action: 'BIOMETRIC_FACE_AUTH',
+          resource: '/api/auth/face-login',
+          ip,
+          device,
+          outcome: 'failed'
+        });
+        return res.status(400).json({
+          message: targetUser.must_re_enroll_face
+            ? `Administrator has requested mandatory Face ID re-enrollment for ${targetUser.name}. Please re-register your face.`
+            : `Face ID has not been set up yet for ${targetUser.name}. Please set up Face ID first.`,
+          requiresEnrollment: true,
+          user: { id: targetUser.id, name: targetUser.name, email: targetUser.email, role: targetUser.role }
+        });
+      }
+
+      let enrolledVector = null;
+      try {
+        enrolledVector = JSON.parse(targetUser.face_descriptor);
+      } catch (e) {
+        enrolledVector = null;
+      }
+
+      if (Array.isArray(liveDescriptor) && Array.isArray(enrolledVector)) {
+        matchResult = calculateBiometricMatch(liveDescriptor, enrolledVector);
+        if (matchResult.requiresReEnrollment) {
+          await logAccess({
+            userId: targetUser.id,
+            role: targetUser.role,
+            action: 'BIOMETRIC_FACE_AUTH',
+            resource: '/api/auth/face-login',
+            ip,
+            device,
+            outcome: 'failed'
+          });
+          return res.status(400).json({
+            message: `Biometric template for ${targetUser.name} was saved with a previous version. Tap "Set Up Face ID" to update to high-precision AI in 5 seconds.`,
+            requiresEnrollment: true,
+            user: { id: targetUser.id, name: targetUser.name, email: targetUser.email, role: targetUser.role }
+          });
+        }
+      } else {
+        const confNum = confidence ? parseFloat(confidence) : 98.4;
+        matchResult = { isMatch: confNum >= 85.0, score: confNum };
+      }
+    } 
+    // B. Automatic 1:N Facial Identification across all enrolled clinical staff
+    else {
+      const [allEnrolled] = await pool.execute(
+        'SELECT * FROM users WHERE face_enrolled = TRUE AND face_descriptor IS NOT NULL AND is_active = 1'
+      );
+
+      if (allEnrolled.length === 0) {
+        return res.status(400).json({
+          message: 'No enrolled staff faces found in database. Please enroll your Face ID first.',
+          requiresEnrollment: true
+        });
+      }
+
+      let bestUser = null;
+      let bestScore = -1;
+      let bestMatchResult = null;
+
+      for (const candidate of allEnrolled) {
+        let enrolledVector = null;
+        try {
+          enrolledVector = JSON.parse(candidate.face_descriptor);
+        } catch (e) {
+          continue;
+        }
+
+        if (Array.isArray(liveDescriptor) && Array.isArray(enrolledVector)) {
+          const res = calculateBiometricMatch(liveDescriptor, enrolledVector);
+          if (res.isMatch && res.score > bestScore) {
+            bestScore = res.score;
+            bestUser = candidate;
+            bestMatchResult = res;
+          }
+        }
+      }
+
+      if (bestUser && bestMatchResult && bestMatchResult.isMatch) {
+        targetUser = bestUser;
+        matchResult = bestMatchResult;
+      } else {
+        const topScore = bestScore > 0 ? bestScore : 0;
+        await logAccess({ action: 'BIOMETRIC_FACE_AUTH', ip, device, outcome: 'failed', resource: '/api/auth/face-login' });
+        return res.status(401).json({
+          message: `Biometric Mismatch (${topScore}% match). Face does not match any enrolled hospital staff member.`,
+          mismatch: true,
+          matchScore: topScore
+        });
+      }
     }
 
-    const [rows] = await pool.execute(query, params);
+    const user = targetUser;
 
-    if (rows.length === 0) {
-      await logAccess({ action: 'BIOMETRIC_FACE_AUTH', ip, device, outcome: 'failed', resource: '/api/auth/face-login' });
-      return res.status(401).json({ message: 'Clinical account not found in hospital directory.' });
-    }
-
-    const user = rows[0];
-
-    // Check if account is locked by admin
+    // Check account status
     if (user.is_active === 0 || user.is_active === false) {
       await logAccess({ userId: user.id, role: user.role, action: 'FACE_LOGIN_LOCKED_ATTEMPT', ip, device, outcome: 'denied' });
       return res.status(403).json({
@@ -221,8 +357,7 @@ async function faceLogin(req, res) {
       });
     }
 
-    // Check emergency lockdown policy
-    const lockdown = await getSetting('emergency_lockdown');
+    // Check lockdown
     if (lockdown === 'true' && user.role !== 'admin') {
       await logAccess({ userId: user.id, role: user.role, action: 'FACE_LOGIN_LOCKDOWN_BLOCKED', ip, device, outcome: 'denied' });
       return res.status(403).json({
@@ -230,42 +365,7 @@ async function faceLogin(req, res) {
       });
     }
 
-    // Check if admin required face re-enrollment
-    if (user.must_re_enroll_face || !user.face_descriptor) {
-      await logAccess({
-        userId: user.id,
-        role: user.role,
-        action: 'BIOMETRIC_FACE_AUTH',
-        resource: '/api/auth/face-login',
-        ip,
-        device,
-        outcome: 'failed'
-      });
-      return res.status(400).json({
-        message: user.must_re_enroll_face
-          ? `Administrator has requested mandatory Face ID re-enrollment for ${user.name}. Please re-register your face.`
-          : `Face ID has not been set up yet for ${user.name}. Please set up Face ID first.`,
-        requiresEnrollment: true,
-        user: { id: user.id, name: user.name, email: user.email, role: user.role }
-      });
-    }
-
-    let enrolledVector = null;
-    try {
-      enrolledVector = JSON.parse(user.face_descriptor);
-    } catch (e) {
-      enrolledVector = null;
-    }
-
-    let matchResult = null;
-    if (Array.isArray(liveDescriptor) && Array.isArray(enrolledVector)) {
-      matchResult = calculateBiometricMatch(liveDescriptor, enrolledVector);
-    } else {
-      // Fallback for simulation or legacy test tokens
-      const confNum = confidence ? parseFloat(confidence) : 98.4;
-      matchResult = { isMatch: confNum >= 85.0, score: confNum };
-    }
-
+    // Check match outcome
     if (!matchResult.isMatch) {
       await logAccess({
         userId: user.id,
@@ -277,9 +377,9 @@ async function faceLogin(req, res) {
         outcome: 'failed'
       });
       return res.status(401).json({
-        message: `Biometric Mismatch (${matchResult.score}% match). Live camera face does not match the enrolled face stored in the database.`,
-        matchScore: matchResult.score,
-        mismatch: true
+        message: `Biometric Mismatch (${matchResult.score}% match). Live camera face does not match the enrolled face for ${user.name}.`,
+        mismatch: true,
+        matchScore: matchResult.score
       });
     }
 
@@ -400,7 +500,11 @@ async function enrollFace(req, res) {
 async function getEnrolledFaces(req, res) {
   try {
     const [rows] = await pool.execute(
-      'SELECT id, name, email, role, face_enrolled, (face_descriptor IS NOT NULL) as has_descriptor, face_last_verified FROM users WHERE is_active = true'
+      `SELECT id, name, email, role, face_enrolled, 
+              (face_descriptor IS NOT NULL) as has_descriptor,
+              (face_descriptor IS NOT NULL AND LENGTH(face_descriptor) > 400) as is_modern_ai,
+              face_last_verified 
+       FROM users WHERE is_active = true ORDER BY id ASC`
     );
     res.json(rows);
   } catch (err) {

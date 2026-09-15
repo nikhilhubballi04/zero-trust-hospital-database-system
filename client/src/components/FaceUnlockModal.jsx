@@ -1,309 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { faceLoginUser, getEnrolledFaces, enrollFaceBiometric } from '../services/api';
+import { detectFaceAI, loadFaceApiModels, averageVectors, getKeyLandmarks } from '../utils/faceBiometrics';
 
-/**
- * Computer Vision Real-Time Face vs Hand Analyzer
- * Evaluates live video pixels in YCbCr/RGB color space and anthropometric feature topology.
- */
-function analyzeVideoFrame(pixels, width, height) {
-  let totalLuminance = 0;
-  let skinCount = 0;
-  let minX = width, maxX = 0, minY = height, maxY = 0;
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      const r = pixels[idx];
-      const g = pixels[idx + 1];
-      const b = pixels[idx + 2];
-
-      // Luminance & Chrominance (YCbCr)
-      const Y = 0.299 * r + 0.587 * g + 0.114 * b;
-      const Cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
-      const Cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-
-      totalLuminance += Y;
-
-      // Broad human skin-tone gamut (covers light, medium, dark, Asian, African, Caucasian, and Indian skin tones)
-      const isSkin = (
-        Cb >= 75 && Cb <= 135 &&
-        Cr >= 130 && Cr <= 182 &&
-        Y >= 25 && Y <= 245
-      ) || (
-        r > 65 && g > 40 && b > 20 &&
-        (r - g) > 12 && (r - b) > 15
-      );
-
-      if (isSkin) {
-        skinCount++;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-
-  const totalPixels = width * height;
-  const avgLuminance = totalLuminance / totalPixels;
-  const skinRatio = skinCount / totalPixels;
-
-  // 1. Camera covered by dark object or hand blocking light
-  if (avgLuminance < 22) {
-    return {
-      detected: false,
-      status: 'dark',
-      message: '⚠️ Camera obscured or too dark · Ensure good lighting'
-    };
-  }
-
-  // 2. Hand pressed directly against lens (uniform skin covering > 80% of sensor)
-  if (skinRatio > 0.80) {
-    return {
-      detected: false,
-      status: 'hand_covering',
-      message: '⚠️ Hand detected covering lens · Please uncover camera'
-    };
-  }
-
-  // 3. No skin detected (empty room, wall, desk, background)
-  if (skinRatio < 0.05) {
-    return {
-      detected: false,
-      status: 'no_face',
-      message: '⚠️ Position your face inside the frame'
-    };
-  }
-
-  const boxW = Math.max(maxX - minX, 1);
-  const boxH = Math.max(maxY - minY, 1);
-
-  // 4. Geometry check: Human head has an aspect ratio of ~0.75 to 2.2
-  const aspect = boxH / boxW;
-  if (aspect < 0.70 || aspect > 2.3) {
-    return {
-      detected: false,
-      status: 'invalid_shape',
-      message: '⚠️ Object does not match facial geometry · Look at camera'
-    };
-  }
-
-  // 5. Anthropometric Ocular-Nasal Contrast Check (Face vs Hand Test)
-  let leftEyeLum = 0, leftEyeCount = 0;
-  let rightEyeLum = 0, rightEyeCount = 0;
-  let bridgeLum = 0, bridgeCount = 0;
-  let foreheadLum = 0, foreheadCount = 0;
-
-  const eyeY1 = Math.floor(minY + boxH * 0.26);
-  const eyeY2 = Math.floor(minY + boxH * 0.52);
-  const fhY1 = Math.floor(minY + boxH * 0.08);
-  const fhY2 = Math.floor(minY + boxH * 0.24);
-
-  // Sample forehead
-  for (let y = fhY1; y <= fhY2; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const idx = (y * width + x) * 4;
-      foreheadLum += 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-      foreheadCount++;
-    }
-  }
-
-  // Sample eyes & bridge
-  for (let y = eyeY1; y <= eyeY2; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const relX = (x - minX) / boxW;
-      const idx = (y * width + x) * 4;
-      const Y = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
-
-      if (relX >= 0.16 && relX <= 0.42) {
-        leftEyeLum += Y;
-        leftEyeCount++;
-      } else if (relX >= 0.58 && relX <= 0.84) {
-        rightEyeLum += Y;
-        rightEyeCount++;
-      } else if (relX >= 0.44 && relX <= 0.56) {
-        bridgeLum += Y;
-        bridgeCount++;
-      }
-    }
-  }
-
-  const avgLeftEye = leftEyeCount ? leftEyeLum / leftEyeCount : 0;
-  const avgRightEye = rightEyeCount ? rightEyeLum / rightEyeCount : 0;
-  const avgBridge = bridgeCount ? bridgeLum / bridgeCount : 0;
-  const avgForehead = foreheadCount ? foreheadLum / foreheadCount : 0;
-
-  const eyeBridgeDiff = avgBridge - (avgLeftEye + avgRightEye) / 2;
-
-  // Bilateral facial topology criteria (accommodates diverse lighting without flickering)
-  const hasFacialTopology = (
-    eyeBridgeDiff > 1.2 ||
-    (avgBridge > 0 && (avgLeftEye < avgBridge * 0.985 || avgRightEye < avgBridge * 0.985)) ||
-    (avgForehead > 0 && (avgLeftEye < avgForehead * 0.97 || avgRightEye < avgForehead * 0.97))
-  );
-
-  if (!hasFacialTopology) {
-    return {
-      detected: false,
-      status: 'no_features',
-      message: '⚠️ Hand or uniform object detected · Look directly into camera'
-    };
-  }
-
-  const confidence = Math.min(99.4, 91.0 + (eyeBridgeDiff * 0.6) + (skinRatio * 15));
-
-  return {
-    detected: true,
-    status: 'face_locked',
-    message: 'Face locked · Analyzing 128 nodal landmarks...',
-    box: { x: minX, y: minY, width: boxW, height: boxH },
-    confidence,
-    skinRatio
-  };
-}
-
-/**
- * 16-Dimensional Anthropometric Facial Vector Extractor
- * Produces a stable, normalized Euclidean biometric fingerprint based on facial landmarks,
- * inter-ocular proportions, nasal contrast, and skin chrominance.
- */
-function extractFacialVector(pixels, width, height, box) {
-  if (!box || box.width <= 0 || box.height <= 0) return null;
-
-  const minX = Math.max(0, Math.min(width - 1, Math.floor(box.x)));
-  const minY = Math.max(0, Math.min(height - 1, Math.floor(box.y)));
-  const boxW = Math.max(1, Math.min(width - minX, Math.floor(box.width)));
-  const boxH = Math.max(1, Math.min(height - minY, Math.floor(box.height)));
-
-  const aspectRatio = parseFloat((boxH / boxW).toFixed(3));
-
-  let totalCb = 0, totalCr = 0, skinCount = 0, totalSkinY = 0;
-  let leftEyeLum = 0, leftEyeCount = 0;
-  let rightEyeLum = 0, rightEyeCount = 0;
-  let bridgeLum = 0, bridgeCount = 0;
-  let foreheadLum = 0, foreheadCount = 0;
-  let lowerThirdLum = 0, lowerThirdCount = 0;
-  let leftCheekLum = 0, leftCheekCount = 0;
-  let rightCheekLum = 0, rightCheekCount = 0;
-
-  const eyeY1 = Math.floor(minY + boxH * 0.26);
-  const eyeY2 = Math.floor(minY + boxH * 0.50);
-  const fhY1 = Math.floor(minY + boxH * 0.08);
-  const fhY2 = Math.floor(minY + boxH * 0.24);
-  const ltY1 = Math.floor(minY + boxH * 0.65);
-  const ltY2 = Math.floor(minY + boxH * 0.88);
-  const chkY1 = Math.floor(minY + boxH * 0.45);
-  const chkY2 = Math.floor(minY + boxH * 0.65);
-
-  for (let y = minY; y < minY + boxH; y++) {
-    for (let x = minX; x < minX + boxW; x++) {
-      const idx = (y * width + x) * 4;
-      const r = pixels[idx];
-      const g = pixels[idx + 1];
-      const b = pixels[idx + 2];
-
-      const Y = 0.299 * r + 0.587 * g + 0.114 * b;
-      const Cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
-      const Cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
-
-      const isSkin = (
-        Cb >= 75 && Cb <= 135 &&
-        Cr >= 130 && Cr <= 182 &&
-        Y >= 25 && Y <= 245
-      ) || (
-        r > 65 && g > 40 && b > 20 &&
-        (r - g) > 12 && (r - b) > 15
-      );
-
-      if (isSkin) {
-        skinCount++;
-        totalCb += Cb;
-        totalCr += Cr;
-        totalSkinY += (y - minY);
-      }
-
-      const relX = (x - minX) / boxW;
-
-      // Forehead
-      if (y >= fhY1 && y <= fhY2) {
-        foreheadLum += Y;
-        foreheadCount++;
-      }
-      // Eyes & Bridge
-      if (y >= eyeY1 && y <= eyeY2) {
-        if (relX >= 0.16 && relX <= 0.42) {
-          leftEyeLum += Y;
-          leftEyeCount++;
-        } else if (relX >= 0.58 && relX <= 0.84) {
-          rightEyeLum += Y;
-          rightEyeCount++;
-        } else if (relX >= 0.44 && relX <= 0.56) {
-          bridgeLum += Y;
-          bridgeCount++;
-        }
-      }
-      // Cheeks
-      if (y >= chkY1 && y <= chkY2) {
-        if (relX >= 0.12 && relX <= 0.35) {
-          leftCheekLum += Y;
-          leftCheekCount++;
-        } else if (relX >= 0.65 && relX <= 0.88) {
-          rightCheekLum += Y;
-          rightCheekCount++;
-        }
-      }
-      // Lower third (mouth & chin)
-      if (y >= ltY1 && y <= ltY2) {
-        lowerThirdLum += Y;
-        lowerThirdCount++;
-      }
-    }
-  }
-
-  const avgLeftEye = leftEyeCount ? leftEyeLum / leftEyeCount : 80;
-  const avgRightEye = rightEyeCount ? rightEyeLum / rightEyeCount : 80;
-  const avgBridge = bridgeCount ? bridgeLum / bridgeCount : 95;
-  const avgForehead = foreheadCount ? foreheadLum / foreheadCount : 90;
-  const avgLowerThird = lowerThirdCount ? lowerThirdLum / lowerThirdCount : 85;
-  const avgLeftCheek = leftCheekCount ? leftCheekLum / leftCheekCount : 88;
-  const avgRightCheek = rightCheekCount ? rightCheekLum / rightCheekCount : 88;
-
-  const meanCb = skinCount ? totalCb / skinCount : 108;
-  const meanCr = skinCount ? totalCr / skinCount : 150;
-  const skinDensity = skinCount / (boxW * boxH);
-  const verticalCentroid = skinCount ? (totalSkinY / skinCount) / boxH : 0.5;
-
-  const eyeDistanceRatio = 0.42;
-  const noseToChinRatio = 0.28;
-  const foreheadToEyeRatio = 0.22;
-  const eyeToNoseRatio = 0.18;
-  const eyeSymmetryRatio = parseFloat((Math.min(avgLeftEye, avgRightEye) / Math.max(Math.max(avgLeftEye, avgRightEye), 1)).toFixed(3));
-  const eyeBridgeDiff = Math.abs(avgBridge - (avgLeftEye + avgRightEye) / 2);
-  const noseBridgeContrast = parseFloat((eyeBridgeDiff / Math.max(avgBridge, 1)).toFixed(3));
-  const leftEyeDarkness = parseFloat((avgLeftEye / Math.max(avgForehead, 1)).toFixed(3));
-  const rightEyeDarkness = parseFloat((avgRightEye / Math.max(avgForehead, 1)).toFixed(3));
-  const lowerThirdRatio = parseFloat((avgLowerThird / Math.max(avgForehead, 1)).toFixed(3));
-  const cheekSymmetryRatio = parseFloat((Math.min(avgLeftCheek, avgRightCheek) / Math.max(Math.max(avgLeftCheek, avgRightCheek), 1)).toFixed(3));
-
-  return [
-    aspectRatio,
-    eyeDistanceRatio,
-    noseToChinRatio,
-    foreheadToEyeRatio,
-    eyeToNoseRatio,
-    eyeSymmetryRatio,
-    noseBridgeContrast,
-    parseFloat(eyeBridgeDiff.toFixed(2)),
-    leftEyeDarkness,
-    rightEyeDarkness,
-    lowerThirdRatio,
-    cheekSymmetryRatio,
-    parseFloat(meanCb.toFixed(1)),
-    parseFloat(meanCr.toFixed(1)),
-    parseFloat(skinDensity.toFixed(3)),
-    parseFloat(verticalCentroid.toFixed(3))
-  ];
-}
 
 export default function FaceUnlockModal({
   isOpen,
@@ -325,10 +23,11 @@ export default function FaceUnlockModal({
   const matchScoreRef = useRef(0);
   const modeRef = useRef(initialMode || 'unlock');
   const collectedVectorsRef = useRef([]);
+  const isProcessingRef = useRef(false);
 
   const [mode, setMode] = useState(initialMode || 'unlock'); // 'unlock' | 'enroll'
   const [scanStep, setScanStep] = useState('init'); // init, searching, scanning, analyzing, verified, enrolled, needs_enrollment, error
-  const [statusText, setStatusText] = useState('Initializing biometric optical sensor...');
+  const [statusText, setStatusText] = useState('Initializing biometric neural sensor...');
   const [progress, setProgress] = useState(0);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState('');
@@ -337,6 +36,7 @@ export default function FaceUnlockModal({
   const [matchScore, setMatchScore] = useState(0);
   const [faceDetected, setFaceDetected] = useState(false);
   const [faceBox, setFaceBox] = useState(null);
+  const [landmarks, setLandmarks] = useState([]);
   const [verifiedAuthData, setVerifiedAuthData] = useState(null);
   const [enrollSuccessMessage, setEnrollSuccessMessage] = useState('');
 
@@ -351,18 +51,21 @@ export default function FaceUnlockModal({
       .then(res => {
         const staffList = res.data || [];
         setEnrolledStaff(staffList);
-        if (!selectedStaffEmail && staffList.length > 0) {
-          const matched = staffList.find(u => u.email === targetEmail) ||
-                          staffList.find(u => u.role === 'doctor') ||
-                          staffList[0];
+        if (targetEmail) {
+          const matched = staffList.find(u => u.email === targetEmail);
+          if (matched) setSelectedStaffEmail(matched.email);
+        } else if (initialMode === 'enroll' && !selectedStaffEmail && staffList.length > 0) {
+          const matched = staffList.find(u => u.role === 'doctor') || staffList[0];
           setSelectedStaffEmail(matched.email);
         }
+        // In unlock mode with no targetEmail, leave selectedStaffEmail as "" for Auto-Identify!
       })
       .catch(() => {});
-  }, [selectedStaffEmail, targetEmail]);
+  }, [selectedStaffEmail, targetEmail, initialMode]);
 
   useEffect(() => {
     if (isOpen) {
+      loadFaceApiModels().catch(() => {});
       loadStaffProfiles();
       if (initialMode) {
         setMode(initialMode);
@@ -414,6 +117,7 @@ export default function FaceUnlockModal({
     smoothedBoxRef.current = null;
     authTriggeredRef.current = false;
     collectedVectorsRef.current = [];
+    isProcessingRef.current = false;
   }, []);
 
   // Mode switcher handler (keeps camera streaming continuously)
@@ -425,6 +129,7 @@ export default function FaceUnlockModal({
     negativeStreakRef.current = 0;
     authTriggeredRef.current = false;
     collectedVectorsRef.current = [];
+    isProcessingRef.current = false;
     setProgress(0);
     setVerifiedAuthData(null);
     setEnrollSuccessMessage('');
@@ -433,6 +138,10 @@ export default function FaceUnlockModal({
       setScanStep('searching');
       scanStepRef.current = 'searching';
       setStatusText('Face ID Setup Mode · Center face to enroll biometric template');
+      if (!selectedStaffEmail && enrolledStaff.length > 0) {
+        const defaultStaff = enrolledStaff.find(u => u.role === 'doctor') || enrolledStaff[0];
+        setSelectedStaffEmail(defaultStaff.email);
+      }
     } else {
       setScanStep('searching');
       scanStepRef.current = 'searching';
@@ -445,10 +154,17 @@ export default function FaceUnlockModal({
     if (authTriggeredRef.current) return;
     authTriggeredRef.current = true;
 
-    const emailToUse = selectedStaffEmail || targetEmail || 'doctor@hospital.com';
+    const emailToUse = selectedStaffEmail || targetEmail;
+    if (!emailToUse) {
+      setScanStep('error');
+      scanStepRef.current = 'error';
+      setStatusText('Please select a staff account to enroll Face ID.');
+      authTriggeredRef.current = false;
+      return;
+    }
 
     try {
-      setStatusText('Saving biometric template to hospital database...');
+      setStatusText('Saving 128-D neural biometric template to hospital database...');
       setProgress(98);
 
       const res = await enrollFaceBiometric({
@@ -463,12 +179,10 @@ export default function FaceUnlockModal({
 
       const successMsg = res.data?.message || `Face ID successfully enrolled in database for ${emailToUse}!`;
       setEnrollSuccessMessage(successMsg);
-      setStatusText('✓ Face ID Enrolled in Database! Live camera continuous monitoring active.');
+      setStatusText('✓ Face ID Enrolled! Deep neural template stored. Continuous camera active.');
 
       // Refresh staff list so it immediately shows has_descriptor = true
       getEnrolledFaces().then(r => setEnrolledStaff(r.data || [])).catch(() => {});
-
-      // Continuous camera remains ON!
     } catch (err) {
       setScanStep('error');
       scanStepRef.current = 'error';
@@ -484,7 +198,7 @@ export default function FaceUnlockModal({
     authTriggeredRef.current = true;
 
     try {
-      const emailToUse = selectedStaffEmail || targetEmail || 'doctor@hospital.com';
+      const emailToUse = selectedStaffEmail || targetEmail || ''; // blank enables 1:N auto-identification!
       const res = await faceLoginUser({
         email: emailToUse,
         confidence: computedScore,
@@ -497,11 +211,10 @@ export default function FaceUnlockModal({
       const finalScore = res.data.biometric?.confidence?.replace('%', '') || computedScore;
       matchScoreRef.current = finalScore;
       setMatchScore(finalScore);
-      setStatusText(`✓ Biometric Verified (${finalScore}%) · Continuous Monitoring Active`);
+      const userName = res.data.user?.name ? `${res.data.user.name}` : 'Staff Member';
+      setStatusText(`✓ Biometric Verified: Welcome ${userName} (${finalScore}%) · Continuous Monitoring Active`);
       setProgress(100);
       playBiometricChime(false);
-
-      // CONTINUOUS CAMERA: Camera stays ON continuously!
     } catch (err) {
       authTriggeredRef.current = false;
       collectedVectorsRef.current = [];
@@ -524,7 +237,7 @@ export default function FaceUnlockModal({
     }
   }, [selectedStaffEmail, targetEmail]);
 
-  // Real-time live frame detection loop with temporal smoothing (zero flicker)
+  // Real-time live frame detection loop powered by TinyFaceDetector neural net
   const startLiveFrameAnalysis = useCallback(() => {
     if (loopRef.current) clearInterval(loopRef.current);
     consecutiveFramesRef.current = 0;
@@ -533,164 +246,169 @@ export default function FaceUnlockModal({
     smoothedBoxRef.current = null;
     authTriggeredRef.current = false;
     collectedVectorsRef.current = [];
+    isProcessingRef.current = false;
 
     loopRef.current = setInterval(async () => {
+      if (isProcessingRef.current) return;
       const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) return;
+      if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight || video.paused) return;
 
-      const sw = 160;
-      const sh = 120;
-      canvas.width = sw;
-      canvas.height = sh;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      ctx.drawImage(video, 0, 0, sw, sh);
+      isProcessingRef.current = true;
+      try {
+        const result = await detectFaceAI(video);
+        const currentMode = modeRef.current;
+        const currentStep = scanStepRef.current;
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
 
-      const imgData = ctx.getImageData(0, 0, sw, sh);
-      const result = analyzeVideoFrame(imgData.data, sw, sh);
+        // CONTINUOUS CAMERA MODE: If already verified or enrolled, keep camera running and actively track face presence!
+        if (currentStep === 'verified' || currentStep === 'enrolled') {
+          if (result.detected && result.box) {
+            const nx = (result.box.x / vw) * 100;
+            const ny = (result.box.y / vh) * 100;
+            const nw = (result.box.width / vw) * 100;
+            const nh = (result.box.height / vh) * 100;
 
-      const currentMode = modeRef.current;
-      const currentStep = scanStepRef.current;
-
-      // CONTINUOUS CAMERA MODE: If already verified or enrolled, keep camera running and actively track face presence!
-      if (currentStep === 'verified' || currentStep === 'enrolled') {
-        if (result.detected) {
-          const nx = (result.box.x / sw) * 100;
-          const ny = (result.box.y / sh) * 100;
-          const nw = (result.box.width / sw) * 100;
-          const nh = (result.box.height / sh) * 100;
-          if (smoothedBoxRef.current) {
-            smoothedBoxRef.current = {
-              nx: smoothedBoxRef.current.nx * 0.75 + nx * 0.25,
-              ny: smoothedBoxRef.current.ny * 0.75 + ny * 0.25,
-              nw: smoothedBoxRef.current.nw * 0.75 + nw * 0.25,
-              nh: smoothedBoxRef.current.nh * 0.75 + nh * 0.25,
-            };
-            setFaceBox({ ...smoothedBoxRef.current });
-          }
-          setFaceDetected(true);
-          if (currentStep === 'verified') {
-            setStatusText(`✓ Clinical Presence Active · Verified (${matchScoreRef.current}%)`);
-          } else {
-            setStatusText(`✓ Face ID Enrolled · Biometric Identity Stored in Database`);
-          }
-        } else {
-          setFaceDetected(false);
-          setStatusText(result.message);
-        }
-        return;
-      }
-
-      // If in paused or error/needs_enrollment state, wait for user intervention
-      if (currentStep === 'needs_enrollment' || (currentStep === 'error' && authTriggeredRef.current)) {
-        return;
-      }
-
-      // Temporal Hysteresis Filter (eliminates visual flicker)
-      if (result.detected) {
-        positiveStreakRef.current += 1;
-        negativeStreakRef.current = 0;
-
-        // Exponential Moving Average for silky smooth landmark coordinates
-        const nx = (result.box.x / sw) * 100;
-        const ny = (result.box.y / sh) * 100;
-        const nw = (result.box.width / sw) * 100;
-        const nh = (result.box.height / sh) * 100;
-
-        if (!smoothedBoxRef.current) {
-          smoothedBoxRef.current = { nx, ny, nw, nh };
-        } else {
-          smoothedBoxRef.current = {
-            nx: smoothedBoxRef.current.nx * 0.75 + nx * 0.25,
-            ny: smoothedBoxRef.current.ny * 0.75 + ny * 0.25,
-            nw: smoothedBoxRef.current.nw * 0.75 + nw * 0.25,
-            nh: smoothedBoxRef.current.nh * 0.75 + nh * 0.25,
-          };
-        }
-        setFaceBox(smoothedBoxRef.current);
-
-        // Require 2 positive frames before locking state
-        if (positiveStreakRef.current >= 2) {
-          setFaceDetected(true);
-          consecutiveFramesRef.current += 1;
-          const frames = consecutiveFramesRef.current;
-
-          // Extract current frame's 16-D facial vector
-          const currentVector = extractFacialVector(imgData.data, sw, sh, result.box);
-          if (currentVector) {
-            collectedVectorsRef.current.push(currentVector);
-          }
-
-          // === ENROLLMENT MODE (Set Up Face ID) ===
-          if (currentMode === 'enroll') {
-            if (frames <= 4) {
-              setScanStep('scanning');
-              setStatusText('Position face in frame · Hold steady (Step 1/3)...');
-              setProgress(Math.min(35, frames * 8));
-            } else if (frames <= 8) {
-              setScanStep('analyzing');
-              setStatusText('Mapping 16 anthropometric facial contours (Step 2/3)...');
-              setProgress(Math.min(75, 35 + (frames - 4) * 10));
-            } else if (frames <= 12) {
-              setStatusText('Synthesizing biometric template for database (Step 3/3)...');
-              setProgress(Math.min(95, 75 + (frames - 8) * 5));
+            if (smoothedBoxRef.current) {
+              smoothedBoxRef.current = {
+                nx: smoothedBoxRef.current.nx * 0.75 + nx * 0.25,
+                ny: smoothedBoxRef.current.ny * 0.75 + ny * 0.25,
+                nw: smoothedBoxRef.current.nw * 0.75 + nw * 0.25,
+                nh: smoothedBoxRef.current.nh * 0.75 + nh * 0.25,
+              };
+              setFaceBox({ ...smoothedBoxRef.current });
+            }
+            if (result.landmarks) {
+              setLandmarks(getKeyLandmarks(result.landmarks, vw, vh));
+            }
+            setFaceDetected(true);
+            if (currentStep === 'verified') {
+              setStatusText(`✓ Clinical Presence Active · Verified (${matchScoreRef.current}%)`);
             } else {
-              // 13+ frames collected: average vectors and save to database
-              const numVectors = collectedVectorsRef.current.length;
-              if (numVectors > 0) {
-                const averaged = [];
-                for (let i = 0; i < 16; i++) {
-                  let sum = 0;
-                  for (let f = 0; f < numVectors; f++) {
-                    sum += collectedVectorsRef.current[f][i];
-                  }
-                  averaged.push(parseFloat((sum / numVectors).toFixed(4)));
+              setStatusText(`✓ Face ID Enrolled · Biometric Identity Stored in Database`);
+            }
+          } else {
+            setFaceDetected(false);
+            setLandmarks([]);
+            setStatusText(result.message || '⚠️ Position your face inside the frame');
+          }
+          return;
+        }
+
+        // If in paused or error/needs_enrollment state, wait for user intervention
+        if (currentStep === 'needs_enrollment' || (currentStep === 'error' && authTriggeredRef.current)) {
+          return;
+        }
+
+        // AI Neural Face Detection Result
+        if (result.detected && result.box) {
+          positiveStreakRef.current += 1;
+          negativeStreakRef.current = 0;
+
+          // Normalized percentage coordinates for viewfinder overlay
+          const nx = (result.box.x / vw) * 100;
+          const ny = (result.box.y / vh) * 100;
+          const nw = (result.box.width / vw) * 100;
+          const nh = (result.box.height / vh) * 100;
+
+          if (!smoothedBoxRef.current) {
+            smoothedBoxRef.current = { nx, ny, nw, nh };
+          } else {
+            smoothedBoxRef.current = {
+              nx: smoothedBoxRef.current.nx * 0.7 + nx * 0.3,
+              ny: smoothedBoxRef.current.ny * 0.7 + ny * 0.3,
+              nw: smoothedBoxRef.current.nw * 0.7 + nw * 0.3,
+              nh: smoothedBoxRef.current.nh * 0.7 + nh * 0.3,
+            };
+          }
+          setFaceBox(smoothedBoxRef.current);
+
+          if (result.landmarks) {
+            setLandmarks(getKeyLandmarks(result.landmarks, vw, vh));
+          }
+
+          // Require 2 positive frames before locking state
+          if (positiveStreakRef.current >= 2) {
+            setFaceDetected(true);
+            consecutiveFramesRef.current += 1;
+            const frames = consecutiveFramesRef.current;
+
+            // Collect 128-D FaceNet biometric descriptor
+            if (result.descriptor && result.descriptor.length === 128) {
+              collectedVectorsRef.current.push(result.descriptor);
+            }
+
+            // === ENROLLMENT MODE (Set Up Face ID) ===
+            if (currentMode === 'enroll') {
+              if (frames <= 3) {
+                setScanStep('scanning');
+                setStatusText('Center face in frame · Capturing facial topography (Step 1/3)...');
+                setProgress(Math.min(30, frames * 10));
+              } else if (frames <= 7) {
+                setScanStep('analyzing');
+                setStatusText('Mapping 128 deep neural facial landmarks (Step 2/3)...');
+                setProgress(Math.min(70, 30 + (frames - 3) * 10));
+              } else if (frames <= 10) {
+                setStatusText('Synthesizing high-precision biometric template (Step 3/3)...');
+                setProgress(Math.min(95, 70 + (frames - 7) * 8));
+              } else {
+                // 10+ frames collected: average vectors and save to database
+                if (collectedVectorsRef.current.length >= 6) {
+                  const averaged = averageVectors(collectedVectorsRef.current);
+                  performEnrollment(averaged);
                 }
-                performEnrollment(averaged);
+              }
+            } 
+            // === UNLOCK MODE ===
+            else {
+              if (frames <= 2) {
+                setScanStep('scanning');
+                setStatusText('Face aligned · AI Neural Net scanning...');
+                setProgress(Math.min(35, frames * 17));
+              } else if (frames <= 5) {
+                setScanStep('analyzing');
+                setStatusText('Extracting 128-D FaceNet biometric descriptor...');
+                setProgress(Math.min(75, 35 + (frames - 2) * 14));
+              } else if (frames <= 7) {
+                setStatusText('Comparing facial biometric with hospital database...');
+                setProgress(Math.min(95, 75 + (frames - 5) * 10));
+              } else {
+                // 7+ frames of verified real face: send averaged vector for database matching
+                if (collectedVectorsRef.current.length >= 4) {
+                  const averaged = averageVectors(collectedVectorsRef.current);
+                  const finalScore = result.confidence || 98.4;
+                  setMatchScore(finalScore);
+                  performAuthentication(finalScore, averaged);
+                }
               }
             }
-          } 
-          // === UNLOCK MODE ===
-          else {
-            if (frames <= 3) {
-              setScanStep('scanning');
-              setStatusText('Face aligned · Hold steady for scan...');
-              setProgress(Math.min(30, frames * 10));
-            } else if (frames <= 8) {
-              setScanStep('analyzing');
-              setStatusText('Extracting live facial vector & landmarks...');
-              setProgress(Math.min(70, 30 + (frames - 3) * 8));
-            } else if (frames <= 12) {
-              setStatusText('Anti-spoof confirmed · Matching against database...');
-              setProgress(Math.min(95, 70 + (frames - 8) * 6));
-            } else {
-              // 13+ frames of verified real face: send live vector for database matching
-              const finalScore = result.confidence.toFixed(1);
-              setMatchScore(finalScore);
-              performAuthentication(finalScore, currentVector);
-            }
+          }
+        } else {
+          // Frame did not detect face (hand covering camera, non-face object, or low light)
+          negativeStreakRef.current += 1;
+
+          if (negativeStreakRef.current <= 2 && positiveStreakRef.current >= 2) {
+            // Grace period: ignore brief 1-2 frame blips
+            consecutiveFramesRef.current = Math.max(0, consecutiveFramesRef.current - 1);
+            setProgress(prev => Math.max(0, prev - 5));
+          } else {
+            // Sustained loss of face
+            positiveStreakRef.current = 0;
+            consecutiveFramesRef.current = 0;
+            smoothedBoxRef.current = null;
+            setFaceDetected(false);
+            setFaceBox(null);
+            setLandmarks([]);
+            setScanStep('searching');
+            setStatusText(result.message || '⚠️ Position your face inside the frame');
+            setProgress(0);
+            collectedVectorsRef.current = [];
           }
         }
-      } else {
-        // Frame did not detect face (hand covering camera or single noisy frame)
-        negativeStreakRef.current += 1;
-
-        if (negativeStreakRef.current <= 3 && positiveStreakRef.current >= 2) {
-          // Grace period: ignore brief 1-2 frame blips
-          consecutiveFramesRef.current = Math.max(0, consecutiveFramesRef.current - 1);
-          setProgress(prev => Math.max(0, prev - 4));
-        } else {
-          // Sustained loss of face
-          positiveStreakRef.current = 0;
-          consecutiveFramesRef.current = 0;
-          smoothedBoxRef.current = null;
-          setFaceDetected(false);
-          setFaceBox(null);
-          setScanStep('searching');
-          setStatusText(result.message);
-          setProgress(0);
-          collectedVectorsRef.current = [];
-        }
+      } catch (err) {
+        console.error('Frame analysis error:', err);
+      } finally {
+        isProcessingRef.current = false;
       }
     }, 120);
   }, [performAuthentication, performEnrollment]);
@@ -790,18 +508,16 @@ export default function FaceUnlockModal({
   // Fallback simulation for testing without webcam
   function handleSimulateScan() {
     setScanStep('scanning');
-    setStatusText(mode === 'enroll' ? 'Simulating optical sensor acquisition...' : 'Simulating optical sensor matching...');
+    setStatusText(mode === 'enroll' ? 'Simulating AI optical sensor acquisition...' : 'Simulating AI optical sensor matching...');
     setProgress(35);
 
     setTimeout(() => {
       setScanStep('analyzing');
-      setStatusText(mode === 'enroll' ? 'Synthesizing 16-D anthropometric template...' : 'Analyzing simulated 128 nodal facial landmarks...');
+      setStatusText(mode === 'enroll' ? 'Synthesizing 128-D neural template...' : 'Analyzing simulated 128-D facial landmarks...');
       setProgress(70);
 
       setTimeout(() => {
-        const syntheticVector = [
-          1.32, 0.42, 0.28, 0.22, 0.18, 0.98, 0.15, 4.2, 0.18, 0.17, 0.98, 0.99, 104.2, 152.1, 0.78, 0.48
-        ];
+        const syntheticVector = new Array(128).fill(0).map((_, i) => parseFloat((Math.sin(i * 0.1) * 0.15).toFixed(4)));
         if (mode === 'enroll') {
           performEnrollment(syntheticVector);
         } else {
@@ -984,33 +700,29 @@ export default function FaceUnlockModal({
             <div
               style={{
                 ...styles.landmarkOverlay,
-                opacity: (cameraActive && faceDetected && faceBox && scanStep !== 'verified' && scanStep !== 'enrolled') ? 1 : 0,
+                opacity: (cameraActive && faceDetected && scanStep !== 'verified' && scanStep !== 'enrolled') ? 1 : 0,
                 transition: 'opacity 0.3s ease'
               }}
             >
-              {faceBox && (
+              {landmarks && landmarks.length > 0 ? (
+                landmarks.map((pt, idx) => (
+                  <span
+                    key={idx}
+                    style={{
+                      ...styles.landmarkDot,
+                      top: `${pt.top}%`,
+                      left: `${pt.left}%`
+                    }}
+                  />
+                ))
+              ) : faceBox ? (
                 <>
-                  {/* Left Eye */}
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.32}%` }} />
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.40}%` }} />
-                  
-                  {/* Right Eye */}
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.60}%` }} />
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.68}%` }} />
-
-                  {/* Nose Bridge & Tip */}
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.45}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.55}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
-
-                  {/* Mouth & Lips */}
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.70}%`, left: `${faceBox.nx + faceBox.nw * 0.42}%` }} />
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.70}%`, left: `${faceBox.nx + faceBox.nw * 0.58}%` }} />
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.74}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
-
-                  {/* Chin */}
-                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.88}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.35}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.35}%`, left: `${faceBox.nx + faceBox.nw * 0.65}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.52}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
+                  <span style={{ ...styles.landmarkDot, top: `${faceBox.ny + faceBox.nh * 0.72}%`, left: `${faceBox.nx + faceBox.nw * 0.50}%` }} />
                 </>
-              )}
+              ) : null}
             </div>
 
             {/* Verified / Enrolled Success Badge */}
@@ -1075,7 +787,7 @@ export default function FaceUnlockModal({
         </div>
 
         {/* Enrollment Status Notice Banner */}
-        {mode === 'unlock' && !isSelectedStaffEnrolled && scanStep !== 'verified' && (
+        {mode === 'unlock' && selectedStaffEmail && !isSelectedStaffEnrolled && scanStep !== 'verified' && (
           <div style={styles.noticeBannerWarning}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '16px' }}>⚠️</span>
@@ -1098,24 +810,35 @@ export default function FaceUnlockModal({
         {enrolledStaff.length > 0 && scanStep !== 'verified' && scanStep !== 'enrolled' && (
           <div style={styles.staffSelector}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <label style={styles.staffLabel}>CLINICAL STAFF ACCOUNT:</label>
-              <span style={{
-                fontSize: '10px',
-                fontFamily: 'var(--font-mono)',
-                color: isSelectedStaffEnrolled ? '#34D399' : '#F59E0B',
-                fontWeight: '600'
-              }}>
-                {isSelectedStaffEnrolled ? '✓ ENROLLED IN DB' : '⚠️ NOT ENROLLED'}
-              </span>
+              <label style={styles.staffLabel}>
+                {mode === 'enroll' ? 'STAFF ACCOUNT TO ENROLL:' : 'AUTHENTICATE ACCOUNT:'}
+              </label>
+              {selectedStaffEmail ? (
+                <span style={{
+                  fontSize: '10px',
+                  fontFamily: 'var(--font-mono)',
+                  color: isSelectedStaffEnrolled ? '#34D399' : '#F59E0B',
+                  fontWeight: '600'
+                }}>
+                  {isSelectedStaffEnrolled ? (currentStaffObj?.is_modern_ai ? '✓ AI ENROLLED' : '⚠️ LEGACY (RE-ENROLL)') : '⚠️ NOT SET UP'}
+                </span>
+              ) : (
+                <span style={{ fontSize: '10px', fontFamily: 'var(--font-mono)', color: '#60A5FA', fontWeight: '600' }}>
+                  ✨ AUTO 1:N IDENTIFY
+                </span>
+              )}
             </div>
             <select
               value={selectedStaffEmail}
               onChange={e => setSelectedStaffEmail(e.target.value)}
               style={styles.staffSelect}
             >
+              {mode === 'unlock' && (
+                <option value="">✨ Auto-Identify Face (Any Enrolled Clinical Staff)</option>
+              )}
               {enrolledStaff.map(s => (
                 <option key={s.id} value={s.email}>
-                  {s.name} ({s.role.replace('_', ' ').toUpperCase()}) — {s.has_descriptor ? '✓ Enrolled' : 'Not Set Up'}
+                  {s.name} ({s.role.replace('_', ' ').toUpperCase()}) — {s.is_modern_ai ? '✓ AI Face ID' : (s.has_descriptor ? 'Legacy Face ID' : 'Not Set Up')}
                 </option>
               ))}
             </select>
@@ -1404,7 +1127,8 @@ const styles = {
     position: 'absolute',
     inset: 0,
     pointerEvents: 'none',
-    zIndex: 7
+    zIndex: 7,
+    transform: 'scaleX(-1)'
   },
   landmarkDot: {
     position: 'absolute',
